@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
@@ -35,6 +36,28 @@ func isTomcatDeployDir(path string) bool {
 	return false
 }
 
+// parsePackagePrefixes 解析包前缀参数（支持逗号分隔）
+func parsePackagePrefixes(input string) []string {
+	if input == "" {
+		return nil
+	}
+	parts := strings.Split(input, ",")
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			// 将 . 分隔符转换为 / 以匹配 class 路径
+			p = strings.ReplaceAll(p, ".", "/")
+			// 确保以 / 结尾以匹配完整包名
+			if !strings.HasSuffix(p, "/") {
+				p += "/"
+			}
+			result = append(result, p)
+		}
+	}
+	return result
+}
+
 func init() {
 	rootCmd = &cobra.Command{
 		Use:   "emorad [文件或目录]",
@@ -48,6 +71,7 @@ func init() {
 - 🚀 Multi-core concurrent processing
 - 📊 Beautiful HTML reports
 - 🔧 Auto-managed CFR decompiler
+- 🎯 Business code filtering (skip framework dependencies)
 
 如果不指定参数，将尝试反编译当前目录（假定为 Tomcat 部署目录）。`,
 		Version: Version,
@@ -94,8 +118,34 @@ func init() {
 				}
 			}
 
+			workers, _ := cmd.Flags().GetInt("workers")
+
+			// 构建过滤配置
+			includeStr, _ := cmd.Flags().GetString("include")
+			excludeStr, _ := cmd.Flags().GetString("exclude")
+			skipLibs, _ := cmd.Flags().GetBool("skip-libs")
+			noDefaultExclude, _ := cmd.Flags().GetBool("no-default-exclude")
+
+			filterConfig := NewDefaultFilterConfig()
+			filterConfig.SkipLibs = skipLibs
+
+			// 处理包含过滤器
+			if includes := parsePackagePrefixes(includeStr); len(includes) > 0 {
+				filterConfig.Includes = includes
+			}
+
+			// 处理排除过滤器
+			if excludes := parsePackagePrefixes(excludeStr); len(excludes) > 0 {
+				filterConfig.Excludes = append(filterConfig.Excludes, excludes...)
+			}
+
+			// 如果设置了不使用默认排除
+			if noDefaultExclude {
+				filterConfig.Excludes = parsePackagePrefixes(excludeStr)
+			}
+
 			// 执行反编译
-			if err := decompile(absInputPath, outputDir); err != nil {
+			if err := decompile(absInputPath, outputDir, workers, filterConfig); err != nil {
 				color.Red("反编译失败: %v", err)
 				return
 			}
@@ -104,6 +154,10 @@ func init() {
 
 	rootCmd.Flags().StringP("output", "o", "", "输出目录（默认为当前目录下的 src 目录）")
 	rootCmd.Flags().IntP("workers", "w", runtime.NumCPU(), "并发工作器数量")
+	rootCmd.Flags().StringP("include", "i", "", "只处理匹配的包前缀，逗号分隔（如: com.mycompany,com.partner）")
+	rootCmd.Flags().StringP("exclude", "e", "", "排除匹配的包前缀，逗号分隔（追加到默认排除列表）")
+	rootCmd.Flags().Bool("skip-libs", true, "跳过 lib 目录下的依赖 JAR（默认启用）")
+	rootCmd.Flags().Bool("no-default-exclude", false, "不使用默认的框架包排除列表")
 }
 
 func main() {

@@ -3,14 +3,18 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"html"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/fatih/color"
 )
+
+const consoleWidth = 80
 
 // DecompileResult 表示单个文件的反编译结果
 type DecompileResult struct {
@@ -24,16 +28,16 @@ type DecompileResult struct {
 
 // DecompileReport 表示整体反编译报告
 type DecompileReport struct {
-	InputPath     string             `json:"inputPath"`
-	OutputPath    string             `json:"outputPath"`
-	StartTime     time.Time          `json:"startTime"`
-	EndTime       time.Time          `json:"endTime"`
-	TotalFiles    int32              `json:"totalFiles"`    // 已处理的文件数
-	ExpectedFiles int32              `json:"expectedFiles"` // 预期要处理的总文件数
-	SuccessCount  int32              `json:"successCount"`
-	FailureCount  int32              `json:"failureCount"`
-	Results       []DecompileResult  `json:"results"`
-	mu            sync.Mutex         // 保护Results切片
+	InputPath     string            `json:"inputPath"`
+	OutputPath    string            `json:"outputPath"`
+	StartTime     time.Time         `json:"startTime"`
+	EndTime       time.Time         `json:"endTime"`
+	TotalFiles    int32             `json:"totalFiles"`    // 已处理的文件数
+	ExpectedFiles int32             `json:"expectedFiles"` // 预期要处理的总文件数
+	SuccessCount  int32             `json:"successCount"`
+	FailureCount  int32             `json:"failureCount"`
+	Results       []DecompileResult `json:"results"`
+	mu            sync.Mutex        // 保护Results切片
 }
 
 // NewDecompileReport 创建新的反编译报告
@@ -93,11 +97,7 @@ func (r *DecompileReport) GenerateReport() error {
 	totalFiles := atomic.LoadInt32(&r.TotalFiles)
 
 	// 清除进度显示的行
-	fmt.Print("\r")
-	for i := 0; i < 80; i++ {
-		fmt.Print(" ")
-	}
-	fmt.Print("\r")
+	fmt.Print("\r" + strings.Repeat(" ", consoleWidth) + "\r")
 
 	// 打印摘要报告
 	color.Green("\n✓ 反编译完成！")
@@ -176,7 +176,7 @@ func (r *DecompileReport) saveHTMLReport(path string) error {
 	totalFiles := atomic.LoadInt32(&r.TotalFiles)
 	duration := r.EndTime.Sub(r.StartTime)
 
-	html := fmt.Sprintf(`<!DOCTYPE html>
+	htmlContent := fmt.Sprintf(`<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
@@ -271,10 +271,10 @@ func (r *DecompileReport) saveHTMLReport(path string) error {
 		if !result.Success {
 			status = "failure"
 			statusText = "失败"
-			errorMsg = result.Error
+			errorMsg = html.EscapeString(result.Error)
 		}
 
-		html += fmt.Sprintf(`
+		htmlContent += fmt.Sprintf(`
                         <tr>
                             <td>%s</td>
                             <td>%s</td>
@@ -282,15 +282,15 @@ func (r *DecompileReport) saveHTMLReport(path string) error {
                             <td>%.3f</td>
                             <td><div class="error-msg">%s</div></td>
                         </tr>`,
-			result.ClassName,
-			result.PackageName,
+			html.EscapeString(result.ClassName),
+			html.EscapeString(result.PackageName),
 			status,
 			statusText,
 			result.TimeTaken,
 			errorMsg)
 	}
 
-	html += fmt.Sprintf(`
+	htmlContent += fmt.Sprintf(`
                     </tbody>
                 </table>
             </div>
@@ -305,7 +305,7 @@ func (r *DecompileReport) saveHTMLReport(path string) error {
 </body>
 </html>`, r.InputPath, r.OutputPath)
 
-	return os.WriteFile(path, []byte(html), 0644)
+	return os.WriteFile(path, []byte(htmlContent), 0644)
 }
 
 // 辅助函数

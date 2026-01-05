@@ -12,7 +12,13 @@
 - **嵌套JAR**: 完整支持Spring Boot的BOOT-INF/lib嵌套JAR结构
 - **多核并发**: 充分利用多核CPU,显著提升反编译速度
 
-### 🎨 用户体验
+### � 智能过滤（新功能）
+- **业务代码优先**: 自动跳过 Spring、Tomcat 等框架包，只反编译业务代码
+- **包含过滤器**: 指定只处理特定包前缀的类
+- **排除过滤器**: 跳过不需要的第三方包
+- **跳过依赖**: 自动跳过 lib 目录下的依赖 JAR
+
+### �🎨 用户体验
 - **零配置**: 自动下载并管理CFR反编译器
 - **跨平台**: 完美支持Windows、macOS、Linux
 - **中文界面**: 详细的中文提示和错误信息
@@ -32,15 +38,6 @@
 ### 自动化安装
 工具会自动下载并管理CFR反编译器,无需手动安装!
 
-### 手动安装CFR (可选)
-```bash
-# macOS (使用 Homebrew)
-brew install cfr-decompiler
-
-# 或从官网下载
-# https://www.benf.org/other/cfr/
-```
-
 ## 🚀 快速开始
 
 ### 1. 编译项目
@@ -50,17 +47,20 @@ brew install cfr-decompiler
 git clone https://github.com/jiaozhu/emorad.git
 cd emorad
 
-# 编译
-go build -o emorad
+# 使用 Make 编译当前平台
+make build
 
-# Windows用户
-go build -o emorad.exe
+# 编译所有平台
+make all
+
+# 或直接使用 Go
+go build -o emorad
 ```
 
 ### 2. 基本使用
 
 ```bash
-# 反编译Spring Boot JAR
+# 反编译Spring Boot JAR（自动过滤框架包）
 emorad app.jar
 
 # 反编译WAR文件
@@ -73,18 +73,83 @@ emorad /path/to/tomcat/webapps/myapp
 emorad MyClass.class
 ```
 
-### 3. 高级选项
+## 🎯 命令行参数
+
+| 参数 | 简写 | 说明 | 默认值 |
+|------|------|------|--------|
+| `--output` | `-o` | 输出目录 | 当前目录下的 `src` 目录 |
+| `--workers` | `-w` | 并发工作器数量 | CPU核心数 |
+| `--include` | `-i` | 只处理匹配的包前缀，逗号分隔 | 无（处理所有） |
+| `--exclude` | `-e` | 排除匹配的包前缀，追加到默认列表 | 无 |
+| `--skip-libs` | - | 跳过 lib 目录下的依赖 JAR | `true` |
+| `--no-default-exclude` | - | 不使用默认的框架包排除列表 | `false` |
+| `--version` | `-v` | 显示版本信息 | - |
+| `--help` | `-h` | 显示帮助信息 | - |
+
+### 默认排除的框架包
+
+工具默认会自动跳过以下框架包，只反编译业务代码：
+
+```
+org/springframework/  org/apache/       com/fasterxml/
+org/hibernate/        org/mybatis/      ch/qos/logback/
+org/slf4j/           com/google/        javax/
+jakarta/             org/aspectj/       org/yaml/
+com/zaxxer/          org/jboss/         io/netty/
+com/alibaba/         org/thymeleaf/     org/bouncycastle/
+```
+
+## 💡 使用示例
+
+### 只反编译业务代码（推荐）
+
+```bash
+# 只反编译 com.mycompany 包下的代码
+emorad -i "com.mycompany" app.jar
+
+# 反编译多个业务包
+emorad -i "com.mycompany,com.partner" app.jar
+```
+
+### 追加排除规则
+
+```bash
+# 在默认排除列表基础上，额外排除 com.thirdparty
+emorad -e "com.thirdparty" app.jar
+```
+
+### 处理依赖库
+
+```bash
+# 禁用跳过依赖库，处理所有 JAR
+emorad --skip-libs=false app.jar
+
+# 不使用默认排除列表，只排除指定包
+emorad --no-default-exclude -e "org.springframework" app.jar
+```
+
+### 自定义输出和并发
 
 ```bash
 # 自定义输出目录
 emorad -o /custom/output app.jar
 
-# 调整并发数(默认使用所有CPU核心)
+# 调整并发数
 emorad -w 4 app.jar
+```
 
-# 在当前Tomcat部署目录中使用
-cd /path/to/tomcat/webapps/myapp
+### Tomcat部署目录
+
+```bash
+# 方式1: 在部署目录中直接运行
+cd /opt/tomcat/webapps/myapp
 emorad
+
+# 方式2: 指定部署目录
+emorad /opt/tomcat/webapps/myapp
+
+# 结合包含过滤
+emorad -i "com.mycompany" /opt/tomcat/webapps/myapp
 ```
 
 ## 📁 输出说明
@@ -113,81 +178,44 @@ emorad
 - 📝 **完整数据**: 所有处理结果的详细记录
 - 🔗 **易于集成**: 可集成到CI/CD流程
 
-## 💡 使用示例
+## � 编译构建
 
-### Spring Boot应用
+### 使用 Makefile（推荐）
+
 ```bash
-# 反编译Spring Boot JAR,包括所有依赖
-emorad myapp-0.0.1-SNAPSHOT.jar
+# 编译当前平台
+make build
 
-# 输出目录: myapp-0.0.1-SNAPSHOT/src/
-# - BOOT-INF/classes下的业务代码
-# - BOOT-INF/lib下的依赖JAR(递归处理)
+# 编译所有平台
+make all
+
+# 编译特定平台
+make darwin-arm64   # macOS Apple Silicon
+make darwin-amd64   # macOS Intel
+make linux-amd64    # Linux x86_64
+make linux-arm64    # Linux ARM64
+make windows-amd64  # Windows x86_64
+
+# 清理构建产物
+make clean
+
+# 运行测试
+make test
+
+# 查看帮助
+make help
 ```
 
-### Tomcat部署
+### 手动编译
+
 ```bash
-# 方式1: 在部署目录中直接运行
-cd /opt/tomcat/webapps/myapp
-emorad
+# 当前平台
+go build -o emorad
 
-# 方式2: 指定部署目录
-emorad /opt/tomcat/webapps/myapp
-
-# 输出目录: /opt/tomcat/webapps/myapp/src/
-```
-
-### WAR文件
-```bash
-# 反编译WAR文件
-emorad myapp.war
-
-# 输出目录: myapp/src/
-# - WEB-INF/classes下的业务代码
-# - WEB-INF/lib下的依赖JAR
-```
-
-## 🔧 高级功能
-
-### 自动CFR管理
-工具会自动处理CFR反编译器:
-1. ✅ 优先使用系统安装的`cfr-decompiler`命令
-2. ✅ 如果没有,自动下载CFR JAR到`~/.emorad/cfr/`
-3. ✅ 使用Java运行CFR JAR进行反编译
-
-### 智能类型识别
-工具自动识别输入类型:
-- 📦 JAR文件 → JAR处理器(支持嵌套JAR)
-- 📦 WAR文件 → WAR处理器
-- 📄 CLASS文件 → CLASS处理器
-- 📁 目录 → 目录处理器(自动检测Tomcat结构)
-
-### 并发处理优化
-- 🚀 默认使用所有CPU核心
-- 🚀 智能任务分配
-- 🚀 进度实时显示
-
-## ⚙️ Windows支持
-
-### 编译Windows版本
-```bash
-# 在任意平台编译Windows版本
-GOOS=windows GOARCH=amd64 go build -o emorad.exe
-
-# 或使用build脚本
-./scripts/build-all.sh
-```
-
-### Windows使用
-```cmd
-# 命令提示符
-emorad.exe app.jar
-
-# PowerShell
-.\emorad.exe app.jar
-
-# 拖放支持
-# 直接将JAR/WAR文件拖到emorad.exe图标上
+# 交叉编译
+GOOS=linux GOARCH=amd64 go build -o emorad-linux-amd64
+GOOS=darwin GOARCH=arm64 go build -o emorad-darwin-arm64
+GOOS=windows GOARCH=amd64 go build -o emorad-windows-amd64.exe
 ```
 
 ## 🐛 故障排除
@@ -235,4 +263,4 @@ MIT License
 
 ---
 
-**Powered by CFR Decompiler** - https://www.benf.org/other/cfr/ 
+**Powered by CFR Decompiler** - https://www.benf.org/other/cfr/

@@ -10,11 +10,21 @@ import (
 )
 
 // decompile 执行反编译操作
-func decompile(inputPath, outputDir string) error {
-	workers, _ := rootCmd.Flags().GetInt("workers")
+func decompile(inputPath, outputDir string, workers int, filterConfig *FilterConfig) error {
 
 	color.Cyan("\n🚀 开始反编译...")
 	color.Cyan("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+	// 显示过滤配置
+	if len(filterConfig.Includes) > 0 {
+		color.Green("📋 包含过滤: %v", filterConfig.Includes)
+	}
+	if len(filterConfig.Excludes) > 0 {
+		color.Yellow("🚫 排除过滤: %d 个包前缀", len(filterConfig.Excludes))
+	}
+	if filterConfig.SkipLibs {
+		color.Yellow("📦 跳过依赖库: 已启用")
+	}
 
 	// 初始化CFR管理器
 	color.Cyan("📦 初始化反编译器...")
@@ -49,17 +59,17 @@ func decompile(inputPath, outputDir string) error {
 
 	if info.IsDir() {
 		// 目录处理
-		processor = NewDirectoryProcessor(cfrManager, workers)
+		processor = NewDirectoryProcessor(cfrManager, workers, filterConfig)
 		color.Cyan("📁 检测到目录,使用目录处理器")
 	} else {
 		// 文件处理
 		ext := strings.ToLower(filepath.Ext(inputPath))
 		switch ext {
 		case ".jar":
-			processor = NewJarFileProcessor(cfrManager, workers)
+			processor = NewJarFileProcessor(cfrManager, workers, filterConfig)
 			color.Cyan("📦 检测到JAR文件,使用JAR处理器")
 		case ".war":
-			processor = NewWarFileProcessor(cfrManager, workers)
+			processor = NewWarFileProcessor(cfrManager, workers, filterConfig)
 			color.Cyan("📦 检测到WAR文件,使用WAR处理器")
 		case ".class":
 			processor = NewClassFileProcessor(cfrManager)

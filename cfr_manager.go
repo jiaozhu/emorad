@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/fatih/color"
 )
@@ -21,10 +22,9 @@ const (
 
 // CFRManager 管理CFR反编译器
 type CFRManager struct {
-	cfrPath    string // CFR JAR文件路径或命令路径
-	useJar     bool   // 是否使用JAR文件
-	javaPath   string // Java命令路径
-	workingDir string // 工作目录
+	cfrPath  string // CFR JAR文件路径或命令路径
+	useJar   bool   // 是否使用JAR文件
+	javaPath string // Java命令路径
 }
 
 // NewCFRManager 创建CFR管理器
@@ -94,7 +94,10 @@ func (m *CFRManager) ensureCFRJar() (string, error) {
 
 // downloadCFR 下载CFR JAR文件
 func (m *CFRManager) downloadCFR(destPath string) error {
-	resp, err := http.Get(CFR_DOWNLOAD_URL)
+	client := &http.Client{
+		Timeout: 60 * time.Second,
+	}
+	resp, err := client.Get(CFR_DOWNLOAD_URL)
 	if err != nil {
 		return fmt.Errorf("下载CFR失败: %v", err)
 	}

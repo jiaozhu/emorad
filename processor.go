@@ -13,6 +13,94 @@ import (
 	"github.com/fatih/color"
 )
 
+// 默认排除的框架包前缀
+var defaultExcludes = []string{
+	"org/springframework/",
+	"org/apache/",
+	"com/fasterxml/",
+	"org/hibernate/",
+	"org/mybatis/",
+	"ch/qos/logback/",
+	"org/slf4j/",
+	"com/google/",
+	"javax/",
+	"jakarta/",
+	"org/aspectj/",
+	"org/yaml/",
+	"com/zaxxer/",
+	"org/jboss/",
+	"io/netty/",
+	"com/alibaba/",
+	"org/thymeleaf/",
+	"org/bouncycastle/",
+}
+
+// FilterConfig 过滤配置
+type FilterConfig struct {
+	Includes []string // 包含的包前缀（优先级最高）
+	Excludes []string // 排除的包前缀
+	SkipLibs bool     // 是否跳过 lib 目录下的 JAR
+}
+
+// NewDefaultFilterConfig 创建默认过滤配置
+func NewDefaultFilterConfig() *FilterConfig {
+	return &FilterConfig{
+		Includes: nil,
+		Excludes: defaultExcludes,
+		SkipLibs: true,
+	}
+}
+
+// ShouldProcessClass 判断是否应该处理该 class 文件
+func (f *FilterConfig) ShouldProcessClass(classPath string) bool {
+	// 提取相对路径（从 BOOT-INF/classes 或 WEB-INF/classes 之后）
+	relativePath := extractRelativePath(classPath)
+
+	// 如果设置了包含过滤器，只处理匹配的
+	if len(f.Includes) > 0 {
+		for _, include := range f.Includes {
+			if strings.HasPrefix(relativePath, include) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// 检查排除过滤器
+	for _, exclude := range f.Excludes {
+		if strings.HasPrefix(relativePath, exclude) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// ShouldProcessJar 判断是否应该处理该 JAR 文件
+func (f *FilterConfig) ShouldProcessJar(jarPath string) bool {
+	if f.SkipLibs {
+		// 跳过 BOOT-INF/lib 和 WEB-INF/lib 下的 JAR
+		if strings.Contains(jarPath, "BOOT-INF/lib") || strings.Contains(jarPath, "WEB-INF/lib") {
+			return false
+		}
+	}
+	return true
+}
+
+// extractRelativePath 从 class 路径中提取相对包路径
+func extractRelativePath(classPath string) string {
+	// 处理 Spring Boot 结构
+	if idx := strings.Index(classPath, "BOOT-INF/classes/"); idx != -1 {
+		return classPath[idx+len("BOOT-INF/classes/"):]
+	}
+	// 处理 WAR/Tomcat 结构
+	if idx := strings.Index(classPath, "WEB-INF/classes/"); idx != -1 {
+		return classPath[idx+len("WEB-INF/classes/"):]
+	}
+	// 普通路径，返回文件名
+	return filepath.Base(classPath)
+}
+
 // FileProcessor 定义文件处理器接口
 type FileProcessor interface {
 	Process(inputPath string, outputDir string, report *DecompileReport) error
@@ -59,14 +147,16 @@ func (p *ClassFileProcessor) Process(inputPath string, outputDir string, report 
 
 // JarFileProcessor 处理JAR文件
 type JarFileProcessor struct {
-	cfrManager *CFRManager
-	workers    int
+	cfrManager   *CFRManager
+	workers      int
+	filterConfig *FilterConfig
 }
 
-func NewJarFileProcessor(cfrManager *CFRManager, workers int) *JarFileProcessor {
+func NewJarFileProcessor(cfrManager *CFRManager, workers int, filterConfig *FilterConfig) *JarFileProcessor {
 	return &JarFileProcessor{
-		cfrManager: cfrManager,
-		workers:    workers,
+		cfrManager:   cfrManager,
+		workers:      workers,
+		filterConfig: filterConfig,
 	}
 }
 
@@ -97,20 +187,35 @@ func (p *JarFileProcessor) Process(inputPath string, outputDir string, report *D
 		return fmt.Errorf("扫描目录失败: %v", err)
 	}
 
-	// 设置预期文件数
-	report.SetTotalExpectedFiles(int32(len(classFiles)))
+	// 过滤 class 文件
+	filteredClasses := make([]string, 0, len(classFiles))
+	for _, classPath := range classFiles {
+		if p.filterConfig.ShouldProcessClass(classPath) {
+			filteredClasses = append(filteredClasses, classPath)
+		}
+	}
 
-	// 处理嵌套的JAR文件(递归)
+	if len(classFiles) != len(filteredClasses) {
+		color.Yellow("📝 过滤后: %d/%d 个 class 文件需要处理", len(filteredClasses), len(classFiles))
+	}
+
+	// 累加预期文件数（而非覆盖，支持嵌套JAR）
+	report.AddExpectedFiles(int32(len(filteredClasses)))
+
+	// 处理嵌套的JAR文件(递归) - 根据配置过滤
 	for _, nestedJar := range nestedJars {
+		if !p.filterConfig.ShouldProcessJar(nestedJar) {
+			continue
+		}
 		color.Yellow("处理嵌套JAR: %s", filepath.Base(nestedJar))
-		nestedProcessor := NewJarFileProcessor(p.cfrManager, p.workers)
+		nestedProcessor := NewJarFileProcessor(p.cfrManager, p.workers, p.filterConfig)
 		if err := nestedProcessor.Process(nestedJar, outputDir, report); err != nil {
 			color.Red("处理嵌套JAR失败: %v", err)
 		}
 	}
 
-	// 并发处理所有class文件
-	return p.processClassFiles(classFiles, outputDir, report)
+	// 并发处理过滤后的class文件
+	return p.processClassFiles(filteredClasses, outputDir, report)
 }
 
 func (p *JarFileProcessor) processClassFiles(classFiles []string, outputDir string, report *DecompileReport) error {
@@ -145,9 +250,9 @@ type WarFileProcessor struct {
 	*JarFileProcessor
 }
 
-func NewWarFileProcessor(cfrManager *CFRManager, workers int) *WarFileProcessor {
+func NewWarFileProcessor(cfrManager *CFRManager, workers int, filterConfig *FilterConfig) *WarFileProcessor {
 	return &WarFileProcessor{
-		JarFileProcessor: NewJarFileProcessor(cfrManager, workers),
+		JarFileProcessor: NewJarFileProcessor(cfrManager, workers, filterConfig),
 	}
 }
 
@@ -157,14 +262,16 @@ func (p *WarFileProcessor) GetType() string {
 
 // DirectoryProcessor 处理目录
 type DirectoryProcessor struct {
-	cfrManager *CFRManager
-	workers    int
+	cfrManager   *CFRManager
+	workers      int
+	filterConfig *FilterConfig
 }
 
-func NewDirectoryProcessor(cfrManager *CFRManager, workers int) *DirectoryProcessor {
+func NewDirectoryProcessor(cfrManager *CFRManager, workers int, filterConfig *FilterConfig) *DirectoryProcessor {
 	return &DirectoryProcessor{
-		cfrManager: cfrManager,
-		workers:    workers,
+		cfrManager:   cfrManager,
+		workers:      workers,
+		filterConfig: filterConfig,
 	}
 }
 
@@ -196,7 +303,7 @@ func (p *DirectoryProcessor) Process(inputPath string, outputDir string, report 
 	// 处理JAR文件
 	for _, jarPath := range jarFiles {
 		color.Yellow("处理JAR文件: %s", filepath.Base(jarPath))
-		jarProcessor := NewJarFileProcessor(p.cfrManager, p.workers)
+		jarProcessor := NewJarFileProcessor(p.cfrManager, p.workers, p.filterConfig)
 		if err := jarProcessor.Process(jarPath, outputDir, report); err != nil {
 			color.Red("处理JAR失败: %v", err)
 		}
@@ -205,7 +312,7 @@ func (p *DirectoryProcessor) Process(inputPath string, outputDir string, report 
 	// 处理WAR文件
 	for _, warPath := range warFiles {
 		color.Yellow("处理WAR文件: %s", filepath.Base(warPath))
-		warProcessor := NewWarFileProcessor(p.cfrManager, p.workers)
+		warProcessor := NewWarFileProcessor(p.cfrManager, p.workers, p.filterConfig)
 		if err := warProcessor.Process(warPath, outputDir, report); err != nil {
 			color.Red("处理WAR失败: %v", err)
 		}
@@ -337,7 +444,9 @@ func unzipFile(src, dest string) error {
 		}
 
 		if f.FileInfo().IsDir() {
-			os.MkdirAll(fpath, os.ModePerm)
+			if err := os.MkdirAll(fpath, os.ModePerm); err != nil {
+				return fmt.Errorf("创建目录失败 %s: %w", fpath, err)
+			}
 			continue
 		}
 
