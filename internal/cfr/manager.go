@@ -1,4 +1,4 @@
-package main
+package cfr
 
 import (
 	"fmt"
@@ -16,20 +16,20 @@ import (
 
 const (
 	// CFR下载地址
-	CFR_DOWNLOAD_URL = "https://github.com/leibnitz27/cfr/releases/download/0.152/cfr-0.152.jar"
-	CFR_VERSION      = "0.152"
+	DownloadURL = "https://github.com/leibnitz27/cfr/releases/download/0.152/cfr-0.152.jar"
+	Version     = "0.152"
 )
 
-// CFRManager 管理CFR反编译器
-type CFRManager struct {
+// Manager 管理CFR反编译器
+type Manager struct {
 	cfrPath  string // CFR JAR文件路径或命令路径
 	useJar   bool   // 是否使用JAR文件
 	javaPath string // Java命令路径
 }
 
-// NewCFRManager 创建CFR管理器
-func NewCFRManager() (*CFRManager, error) {
-	manager := &CFRManager{}
+// NewManager 创建CFR管理器
+func NewManager() (*Manager, error) {
+	manager := &Manager{}
 
 	// 首先尝试使用系统安装的cfr-decompiler命令
 	if path, err := exec.LookPath("cfr-decompiler"); err == nil {
@@ -63,7 +63,7 @@ func NewCFRManager() (*CFRManager, error) {
 }
 
 // ensureCFRJar 确保CFR JAR文件存在,如果不存在则下载
-func (m *CFRManager) ensureCFRJar() (string, error) {
+func (m *Manager) ensureCFRJar() (string, error) {
 	// 确定CFR存储目录
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -75,7 +75,7 @@ func (m *CFRManager) ensureCFRJar() (string, error) {
 		return "", fmt.Errorf("创建CFR目录失败: %v", err)
 	}
 
-	cfrJarPath := filepath.Join(cfrDir, fmt.Sprintf("cfr-%s.jar", CFR_VERSION))
+	cfrJarPath := filepath.Join(cfrDir, fmt.Sprintf("cfr-%s.jar", Version))
 
 	// 检查文件是否存在
 	if _, err := os.Stat(cfrJarPath); err == nil {
@@ -83,7 +83,7 @@ func (m *CFRManager) ensureCFRJar() (string, error) {
 	}
 
 	// 下载CFR JAR
-	color.Cyan("正在下载CFR反编译器 v%s...", CFR_VERSION)
+	color.Cyan("正在下载CFR反编译器 v%s...", Version)
 	if err := m.downloadCFR(cfrJarPath); err != nil {
 		return "", err
 	}
@@ -93,11 +93,11 @@ func (m *CFRManager) ensureCFRJar() (string, error) {
 }
 
 // downloadCFR 下载CFR JAR文件
-func (m *CFRManager) downloadCFR(destPath string) error {
+func (m *Manager) downloadCFR(destPath string) error {
 	client := &http.Client{
 		Timeout: 60 * time.Second,
 	}
-	resp, err := client.Get(CFR_DOWNLOAD_URL)
+	resp, err := client.Get(DownloadURL)
 	if err != nil {
 		return fmt.Errorf("下载CFR失败: %v", err)
 	}
@@ -123,7 +123,7 @@ func (m *CFRManager) downloadCFR(destPath string) error {
 }
 
 // Decompile 反编译class文件或JAR文件
-func (m *CFRManager) Decompile(inputPath string, outputDir string) error {
+func (m *Manager) Decompile(inputPath string, outputDir string) error {
 	var cmd *exec.Cmd
 
 	if m.useJar {
@@ -150,7 +150,7 @@ func (m *CFRManager) Decompile(inputPath string, outputDir string) error {
 }
 
 // DecompileWithOptions 使用自定义选项反编译
-func (m *CFRManager) DecompileWithOptions(inputPath string, outputDir string, options map[string]string) error {
+func (m *Manager) DecompileWithOptions(inputPath string, outputDir string, options map[string]string) error {
 	var args []string
 
 	if m.useJar {
@@ -189,7 +189,7 @@ func (m *CFRManager) DecompileWithOptions(inputPath string, outputDir string, op
 }
 
 // GetVersion 获取CFR版本信息
-func (m *CFRManager) GetVersion() (string, error) {
+func (m *Manager) GetVersion() (string, error) {
 	var cmd *exec.Cmd
 
 	if m.useJar {

@@ -1,4 +1,4 @@
-package main
+package report
 
 import (
 	"encoding/json"
@@ -16,8 +16,8 @@ import (
 
 const consoleWidth = 80
 
-// DecompileResult 表示单个文件的反编译结果
-type DecompileResult struct {
+// Result 表示单个文件的反编译结果
+type Result struct {
 	ClassName   string    `json:"className"`
 	PackageName string    `json:"packageName"`
 	Success     bool      `json:"success"`
@@ -26,32 +26,32 @@ type DecompileResult struct {
 	TimeStamp   time.Time `json:"timestamp"`
 }
 
-// DecompileReport 表示整体反编译报告
-type DecompileReport struct {
-	InputPath     string            `json:"inputPath"`
-	OutputPath    string            `json:"outputPath"`
-	StartTime     time.Time         `json:"startTime"`
-	EndTime       time.Time         `json:"endTime"`
-	TotalFiles    int32             `json:"totalFiles"`    // 已处理的文件数
-	ExpectedFiles int32             `json:"expectedFiles"` // 预期要处理的总文件数
-	SuccessCount  int32             `json:"successCount"`
-	FailureCount  int32             `json:"failureCount"`
-	Results       []DecompileResult `json:"results"`
-	mu            sync.Mutex        // 保护Results切片
+// Report 表示整体反编译报告
+type Report struct {
+	InputPath     string     `json:"inputPath"`
+	OutputPath    string     `json:"outputPath"`
+	StartTime     time.Time  `json:"startTime"`
+	EndTime       time.Time  `json:"endTime"`
+	TotalFiles    int32      `json:"totalFiles"`    // 已处理的文件数
+	ExpectedFiles int32      `json:"expectedFiles"` // 预期要处理的总文件数
+	SuccessCount  int32      `json:"successCount"`
+	FailureCount  int32      `json:"failureCount"`
+	Results       []Result   `json:"results"`
+	mu            sync.Mutex // 保护Results切片
 }
 
-// NewDecompileReport 创建新的反编译报告
-func NewDecompileReport(inputPath, outputPath string) *DecompileReport {
-	return &DecompileReport{
+// New 创建新的反编译报告
+func New(inputPath, outputPath string) *Report {
+	return &Report{
 		InputPath:  inputPath,
 		OutputPath: outputPath,
 		StartTime:  time.Now(),
-		Results:    make([]DecompileResult, 0),
+		Results:    make([]Result, 0),
 	}
 }
 
 // AddResult 添加单个反编译结果并更新进度
-func (r *DecompileReport) AddResult(result DecompileResult) {
+func (r *Report) AddResult(result Result) {
 	if result.Success {
 		atomic.AddInt32(&r.SuccessCount, 1)
 	} else {
@@ -74,22 +74,22 @@ func (r *DecompileReport) AddResult(result DecompileResult) {
 }
 
 // GetTotalExpectedFiles 获取预期总文件数
-func (r *DecompileReport) GetTotalExpectedFiles() int32 {
+func (r *Report) GetTotalExpectedFiles() int32 {
 	return atomic.LoadInt32(&r.ExpectedFiles)
 }
 
 // SetTotalExpectedFiles 设置预期总文件数
-func (r *DecompileReport) SetTotalExpectedFiles(total int32) {
+func (r *Report) SetTotalExpectedFiles(total int32) {
 	atomic.StoreInt32(&r.ExpectedFiles, total)
 }
 
 // AddExpectedFiles 增加预期文件数(用于嵌套JAR)
-func (r *DecompileReport) AddExpectedFiles(count int32) {
+func (r *Report) AddExpectedFiles(count int32) {
 	atomic.AddInt32(&r.ExpectedFiles, count)
 }
 
-// GenerateReport 生成最终报告
-func (r *DecompileReport) GenerateReport() error {
+// Generate 生成最终报告
+func (r *Report) Generate() error {
 	r.EndTime = time.Now()
 	duration := r.EndTime.Sub(r.StartTime)
 	successCount := atomic.LoadInt32(&r.SuccessCount)
@@ -137,7 +137,7 @@ func (r *DecompileReport) GenerateReport() error {
 }
 
 // saveDetailedReports 保存详细的JSON和HTML报告
-func (r *DecompileReport) saveDetailedReports() error {
+func (r *Report) saveDetailedReports() error {
 	reportsDir := filepath.Join(r.OutputPath, "reports")
 	if err := os.MkdirAll(reportsDir, 0755); err != nil {
 		return err
@@ -161,7 +161,7 @@ func (r *DecompileReport) saveDetailedReports() error {
 }
 
 // saveJSONReport 保存JSON格式报告
-func (r *DecompileReport) saveJSONReport(path string) error {
+func (r *Report) saveJSONReport(path string) error {
 	data, err := json.MarshalIndent(r, "", "  ")
 	if err != nil {
 		return err
@@ -170,7 +170,7 @@ func (r *DecompileReport) saveJSONReport(path string) error {
 }
 
 // saveHTMLReport 保存HTML格式报告
-func (r *DecompileReport) saveHTMLReport(path string) error {
+func (r *Report) saveHTMLReport(path string) error {
 	successCount := atomic.LoadInt32(&r.SuccessCount)
 	failureCount := atomic.LoadInt32(&r.FailureCount)
 	totalFiles := atomic.LoadInt32(&r.TotalFiles)
@@ -308,7 +308,7 @@ func (r *DecompileReport) saveHTMLReport(path string) error {
 	return os.WriteFile(path, []byte(htmlContent), 0644)
 }
 
-// 辅助函数
+// getSuccessRate 计算成功率
 func getSuccessRate(success, total int32) float64 {
 	if total == 0 {
 		return 0

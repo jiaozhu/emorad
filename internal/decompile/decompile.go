@@ -1,4 +1,4 @@
-package main
+package decompile
 
 import (
 	"fmt"
@@ -7,10 +7,13 @@ import (
 	"strings"
 
 	"github.com/fatih/color"
+	"github.com/jiaozhu/emorad/internal/cfr"
+	"github.com/jiaozhu/emorad/internal/processor"
+	"github.com/jiaozhu/emorad/internal/report"
 )
 
-// decompile 执行反编译操作
-func decompile(inputPath, outputDir string, workers int, filterConfig *FilterConfig) error {
+// Run 执行反编译操作
+func Run(inputPath, outputDir string, workers int, filterConfig *processor.FilterConfig) error {
 
 	color.Cyan("\n🚀 开始反编译...")
 	color.Cyan("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
@@ -25,10 +28,16 @@ func decompile(inputPath, outputDir string, workers int, filterConfig *FilterCon
 	if filterConfig.SkipLibs {
 		color.Yellow("📦 跳过依赖库: 已启用")
 	}
+	if len(filterConfig.JarIncludes) > 0 {
+		color.Green("🎯 JAR 名称过滤: %v", filterConfig.JarIncludes)
+	}
+	if filterConfig.CopyResources {
+		color.Green("📄 复制配置文件: 已启用")
+	}
 
 	// 初始化CFR管理器
 	color.Cyan("📦 初始化反编译器...")
-	cfrManager, err := NewCFRManager()
+	cfrManager, err := cfr.NewManager()
 	if err != nil {
 		color.Red("❌ 初始化CFR失败: %v", err)
 		color.Yellow("\n💡 提示:")
@@ -52,29 +61,29 @@ func decompile(inputPath, outputDir string, workers int, filterConfig *FilterCon
 	}
 
 	// 创建报告
-	report := NewDecompileReport(inputPath, outputDir)
+	rpt := report.New(inputPath, outputDir)
 
 	// 根据文件类型选择处理器
-	var processor FileProcessor
+	var proc processor.Processor
 
 	if info.IsDir() {
 		// 目录处理
-		processor = NewDirectoryProcessor(cfrManager, workers, filterConfig)
+		proc = processor.NewDirectoryProcessor(cfrManager, workers, filterConfig)
 		color.Cyan("📁 检测到目录,使用目录处理器")
 	} else {
 		// 文件处理
 		ext := strings.ToLower(filepath.Ext(inputPath))
 		switch ext {
 		case ".jar":
-			processor = NewJarFileProcessor(cfrManager, workers, filterConfig)
+			proc = processor.NewJarProcessor(cfrManager, workers, filterConfig)
 			color.Cyan("📦 检测到JAR文件,使用JAR处理器")
 		case ".war":
-			processor = NewWarFileProcessor(cfrManager, workers, filterConfig)
+			proc = processor.NewWarProcessor(cfrManager, workers, filterConfig)
 			color.Cyan("📦 检测到WAR文件,使用WAR处理器")
 		case ".class":
-			processor = NewClassFileProcessor(cfrManager)
+			proc = processor.NewClassProcessor(cfrManager)
 			color.Cyan("📄 检测到CLASS文件,使用CLASS处理器")
-			report.SetTotalExpectedFiles(1)
+			rpt.SetTotalExpectedFiles(1)
 		default:
 			return fmt.Errorf("不支持的文件类型: %s", ext)
 		}
@@ -83,13 +92,13 @@ func decompile(inputPath, outputDir string, workers int, filterConfig *FilterCon
 	color.Cyan("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
 
 	// 执行处理
-	if err := processor.Process(inputPath, outputDir, report); err != nil {
+	if err := proc.Process(inputPath, outputDir, rpt); err != nil {
 		color.Red("\n❌ 处理失败: %v", err)
 		// 即使有错误也生成报告
-		report.GenerateReport()
+		rpt.Generate()
 		return err
 	}
 
 	// 生成报告
-	return report.GenerateReport()
+	return rpt.Generate()
 }

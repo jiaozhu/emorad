@@ -12,7 +12,7 @@ GO := go
 LDFLAGS := -ldflags "-X main.Version=$(VERSION) -X main.BuildTime=$(BUILD_TIME) -X main.GitCommit=$(GIT_COMMIT) -s -w"
 
 # 输出目录
-BUILD_DIR := build
+BUILD_DIR := pkg
 
 # 平台列表
 PLATFORMS := darwin-amd64 darwin-arm64 linux-amd64 linux-arm64 windows-amd64
@@ -47,14 +47,15 @@ help:
 .PHONY: build
 build:
 	@echo "📦 编译当前平台..."
-	$(GO) build $(LDFLAGS) -o $(APP_NAME)
-	@echo "✅ 编译完成: $(APP_NAME)"
+	@mkdir -p $(BUILD_DIR)
+	$(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(APP_NAME) ./cmd/emorad
+	@echo "✅ 编译完成: $(BUILD_DIR)/$(APP_NAME)"
 
 # 安装到系统
 .PHONY: install
 install: build
 	@echo "📦 安装到 /usr/local/bin..."
-	@sudo cp $(APP_NAME) /usr/local/bin/$(APP_NAME)
+	@sudo cp $(BUILD_DIR)/$(APP_NAME) /usr/local/bin/$(APP_NAME)
 	@echo "✅ 安装完成"
 
 # 清理
@@ -99,7 +100,7 @@ all: clean $(PLATFORMS)
 darwin-amd64:
 	@echo "📦 编译 macOS Intel (amd64)..."
 	@mkdir -p $(BUILD_DIR)
-	GOOS=darwin GOARCH=amd64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(APP_NAME)-darwin-amd64
+	GOOS=darwin GOARCH=amd64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(APP_NAME)-darwin-amd64 ./cmd/emorad
 	@echo "✅ macOS Intel 编译完成"
 
 # macOS Apple Silicon
@@ -107,7 +108,7 @@ darwin-amd64:
 darwin-arm64:
 	@echo "📦 编译 macOS Apple Silicon (arm64)..."
 	@mkdir -p $(BUILD_DIR)
-	GOOS=darwin GOARCH=arm64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(APP_NAME)-darwin-arm64
+	GOOS=darwin GOARCH=arm64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(APP_NAME)-darwin-arm64 ./cmd/emorad
 	@echo "✅ macOS Apple Silicon 编译完成"
 
 # Linux x86_64
@@ -115,7 +116,7 @@ darwin-arm64:
 linux-amd64:
 	@echo "📦 编译 Linux x86_64 (amd64)..."
 	@mkdir -p $(BUILD_DIR)
-	GOOS=linux GOARCH=amd64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(APP_NAME)-linux-amd64
+	GOOS=linux GOARCH=amd64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(APP_NAME)-linux-amd64 ./cmd/emorad
 	@echo "✅ Linux x86_64 编译完成"
 
 # Linux ARM64
@@ -123,7 +124,7 @@ linux-amd64:
 linux-arm64:
 	@echo "📦 编译 Linux ARM64 (arm64)..."
 	@mkdir -p $(BUILD_DIR)
-	GOOS=linux GOARCH=arm64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(APP_NAME)-linux-arm64
+	GOOS=linux GOARCH=arm64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(APP_NAME)-linux-arm64 ./cmd/emorad
 	@echo "✅ Linux ARM64 编译完成"
 
 # Windows x86_64
@@ -131,7 +132,7 @@ linux-arm64:
 windows-amd64:
 	@echo "📦 编译 Windows x86_64 (amd64)..."
 	@mkdir -p $(BUILD_DIR)
-	GOOS=windows GOARCH=amd64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(APP_NAME)-windows-amd64.exe
+	GOOS=windows GOARCH=amd64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(APP_NAME)-windows-amd64.exe ./cmd/emorad
 	@echo "✅ Windows x86_64 编译完成"
 
 # 打包发布

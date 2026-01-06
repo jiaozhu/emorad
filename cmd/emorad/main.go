@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/fatih/color"
+	"github.com/jiaozhu/emorad/internal/decompile"
+	"github.com/jiaozhu/emorad/internal/processor"
 	"github.com/spf13/cobra"
 )
 
@@ -21,13 +23,11 @@ var rootCmd *cobra.Command
 
 // 检查目录是否是 Tomcat 部署目录
 func isTomcatDeployDir(path string) bool {
-	// 检查是否存在 WEB-INF/classes 目录
 	classesPath := filepath.Join(path, "WEB-INF", "classes")
 	if stat, err := os.Stat(classesPath); err == nil && stat.IsDir() {
 		return true
 	}
 
-	// 检查是否存在 WEB-INF/lib 目录
 	libPath := filepath.Join(path, "WEB-INF", "lib")
 	if stat, err := os.Stat(libPath); err == nil && stat.IsDir() {
 		return true
@@ -46,9 +46,7 @@ func parsePackagePrefixes(input string) []string {
 	for _, p := range parts {
 		p = strings.TrimSpace(p)
 		if p != "" {
-			// 将 . 分隔符转换为 / 以匹配 class 路径
 			p = strings.ReplaceAll(p, ".", "/")
-			// 确保以 / 结尾以匹配完整包名
 			if !strings.HasSuffix(p, "/") {
 				p += "/"
 			}
@@ -80,14 +78,12 @@ func init() {
 			var err error
 
 			if len(args) == 0 {
-				// 如果没有参数，使用当前目录
 				inputPath, err = os.Getwd()
 				if err != nil {
 					color.Red("无法获取当前目录: %v", err)
 					return
 				}
 
-				// 检查当前目录是否是 Tomcat 部署目录
 				if !isTomcatDeployDir(inputPath) {
 					color.Red("当前目录不是有效的 Tomcat 部署目录")
 					color.Yellow("需要包含 WEB-INF/classes 或 WEB-INF/lib 目录")
@@ -98,54 +94,56 @@ func init() {
 				inputPath = args[0]
 			}
 
-			// 获取输入文件的绝对路径
 			absInputPath, err := filepath.Abs(inputPath)
 			if err != nil {
 				color.Red("无法获取输入路径的绝对路径: %v", err)
 				return
 			}
 
-			// 获取输出目录
 			outputDir, _ := cmd.Flags().GetString("output")
 			if outputDir == "" {
-				// 如果没有指定输出目录，使用输入文件所在目录下的 src 目录
 				if stat, err := os.Stat(absInputPath); err == nil && !stat.IsDir() {
-					// 如果输入是文件，使用其所在目录
 					outputDir = filepath.Join(filepath.Dir(absInputPath), "src")
 				} else {
-					// 如果输入是目录，直接在其下创建 src 目录
 					outputDir = filepath.Join(absInputPath, "src")
 				}
 			}
 
 			workers, _ := cmd.Flags().GetInt("workers")
 
-			// 构建过滤配置
 			includeStr, _ := cmd.Flags().GetString("include")
 			excludeStr, _ := cmd.Flags().GetString("exclude")
+			jarIncludeStr, _ := cmd.Flags().GetString("jar-include")
 			skipLibs, _ := cmd.Flags().GetBool("skip-libs")
 			noDefaultExclude, _ := cmd.Flags().GetBool("no-default-exclude")
 
-			filterConfig := NewDefaultFilterConfig()
+			filterConfig := processor.NewDefaultFilterConfig()
 			filterConfig.SkipLibs = skipLibs
+			filterConfig.CopyResources, _ = cmd.Flags().GetBool("copy-resources")
 
-			// 处理包含过滤器
 			if includes := parsePackagePrefixes(includeStr); len(includes) > 0 {
 				filterConfig.Includes = includes
 			}
 
-			// 处理排除过滤器
 			if excludes := parsePackagePrefixes(excludeStr); len(excludes) > 0 {
 				filterConfig.Excludes = append(filterConfig.Excludes, excludes...)
 			}
 
-			// 如果设置了不使用默认排除
 			if noDefaultExclude {
 				filterConfig.Excludes = parsePackagePrefixes(excludeStr)
 			}
 
-			// 执行反编译
-			if err := decompile(absInputPath, outputDir, workers, filterConfig); err != nil {
+			if jarIncludeStr != "" {
+				parts := strings.Split(jarIncludeStr, ",")
+				for _, p := range parts {
+					p = strings.TrimSpace(p)
+					if p != "" {
+						filterConfig.JarIncludes = append(filterConfig.JarIncludes, p)
+					}
+				}
+			}
+
+			if err := decompile.Run(absInputPath, outputDir, workers, filterConfig); err != nil {
 				color.Red("反编译失败: %v", err)
 				return
 			}
@@ -158,6 +156,8 @@ func init() {
 	rootCmd.Flags().StringP("exclude", "e", "", "排除匹配的包前缀，逗号分隔（追加到默认排除列表）")
 	rootCmd.Flags().Bool("skip-libs", true, "跳过 lib 目录下的依赖 JAR（默认启用）")
 	rootCmd.Flags().Bool("no-default-exclude", false, "不使用默认的框架包排除列表")
+	rootCmd.Flags().StringP("jar-include", "j", "", "只处理名称包含指定关键字的 lib JAR，逗号分隔（如: myapp,common）")
+	rootCmd.Flags().BoolP("copy-resources", "r", false, "复制配置文件到输出目录的 resources 文件夹")
 }
 
 func main() {

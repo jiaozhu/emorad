@@ -176,4 +176,6 @@ $RECYCLE.BIN/
 # Build output
 build/
 
+pkg/
+
 # End of https://www.toptal.com/developers/gitignore/api/macos,windows,jetbrains+all,go
