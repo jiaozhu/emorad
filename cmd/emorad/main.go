@@ -13,7 +13,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// 版本信息，将通过 -ldflags 在编译时注入
 var (
 	Version   = "dev"
 	BuildTime = "unknown"
@@ -21,7 +20,6 @@ var (
 
 var rootCmd *cobra.Command
 
-// 检查目录是否是 Tomcat 部署目录
 func isTomcatDeployDir(path string) bool {
 	classesPath := filepath.Join(path, "WEB-INF", "classes")
 	if stat, err := os.Stat(classesPath); err == nil && stat.IsDir() {
@@ -36,7 +34,6 @@ func isTomcatDeployDir(path string) bool {
 	return false
 }
 
-// parsePackagePrefixes 解析包前缀参数（支持逗号分隔）
 func parsePackagePrefixes(input string) []string {
 	if input == "" {
 		return nil
@@ -58,20 +55,12 @@ func parsePackagePrefixes(input string) []string {
 
 func init() {
 	rootCmd = &cobra.Command{
-		Use:   "emorad [文件或目录]",
-		Short: "🎯 Emorad - Explore More Of Reverse And Decompile",
-		Long: `Emorad is a powerful Java decompiler tool for Spring Boot JAR, WAR files, and Tomcat deployments.
+		Use:   "emorad [file or directory]",
+		Short: "Java decompiler for Spring Boot applications",
+		Long: `Decompile JAR, WAR, CLASS files and Tomcat deployments.
 
-✨ Features:
-- 📦 Spring Boot JAR with nested dependencies
-- 📦 WAR files and Tomcat deployments
-- 📄 Individual CLASS files
-- 🚀 Multi-core concurrent processing
-- 📊 Beautiful HTML reports
-- 🔧 Auto-managed CFR decompiler
-- 🎯 Business code filtering (skip framework dependencies)
-
-如果不指定参数，将尝试反编译当前目录（假定为 Tomcat 部署目录）。`,
+Automatically filters framework code and generates HTML/JSON reports.
+Without arguments, decompiles the current directory.`,
 		Version: Version,
 		Run: func(cmd *cobra.Command, args []string) {
 			var inputPath string
@@ -80,14 +69,14 @@ func init() {
 			if len(args) == 0 {
 				inputPath, err = os.Getwd()
 				if err != nil {
-					color.Red("无法获取当前目录: %v", err)
+					color.Red("Error: cannot get current directory: %v", err)
 					return
 				}
 
 				if !isTomcatDeployDir(inputPath) {
-					color.Red("当前目录不是有效的 Tomcat 部署目录")
-					color.Yellow("需要包含 WEB-INF/classes 或 WEB-INF/lib 目录")
-					color.Yellow("或者指定具体的 JAR/WAR 文件或目录作为参数")
+					color.Red("Error: current directory is not a valid Tomcat deployment")
+					color.Yellow("Hint: directory should contain WEB-INF/classes or WEB-INF/lib")
+					color.Yellow("Hint: or specify a JAR/WAR file or directory as argument")
 					return
 				}
 			} else {
@@ -96,7 +85,7 @@ func init() {
 
 			absInputPath, err := filepath.Abs(inputPath)
 			if err != nil {
-				color.Red("无法获取输入路径的绝对路径: %v", err)
+				color.Red("Error: cannot get absolute path: %v", err)
 				return
 			}
 
@@ -144,20 +133,20 @@ func init() {
 			}
 
 			if err := decompile.Run(absInputPath, outputDir, workers, filterConfig); err != nil {
-				color.Red("反编译失败: %v", err)
+				color.Red("Decompile failed: %v", err)
 				return
 			}
 		},
 	}
 
-	rootCmd.Flags().StringP("output", "o", "", "输出目录（默认为当前目录下的 src 目录）")
-	rootCmd.Flags().IntP("workers", "w", runtime.NumCPU(), "并发工作器数量")
-	rootCmd.Flags().StringP("include", "i", "", "只处理匹配的包前缀，逗号分隔（如: com.mycompany,com.partner）")
-	rootCmd.Flags().StringP("exclude", "e", "", "排除匹配的包前缀，逗号分隔（追加到默认排除列表）")
-	rootCmd.Flags().Bool("skip-libs", true, "跳过 lib 目录下的依赖 JAR（默认启用）")
-	rootCmd.Flags().Bool("no-default-exclude", false, "不使用默认的框架包排除列表")
-	rootCmd.Flags().StringP("jar-include", "j", "", "只处理名称包含指定关键字的 lib JAR，逗号分隔（如: myapp,common）")
-	rootCmd.Flags().BoolP("copy-resources", "r", false, "复制配置文件到输出目录的 resources 文件夹")
+	rootCmd.Flags().StringP("output", "o", "", "Output directory (default: ./src)")
+	rootCmd.Flags().IntP("workers", "w", runtime.NumCPU(), "Number of concurrent workers")
+	rootCmd.Flags().StringP("include", "i", "", "Only process matching package prefixes, comma-separated")
+	rootCmd.Flags().StringP("exclude", "e", "", "Exclude matching package prefixes, comma-separated")
+	rootCmd.Flags().Bool("skip-libs", true, "Skip JAR files in lib directory")
+	rootCmd.Flags().Bool("no-default-exclude", false, "Disable default framework exclusion list")
+	rootCmd.Flags().StringP("jar-include", "j", "", "Only process lib JARs containing specified keywords")
+	rootCmd.Flags().BoolP("copy-resources", "r", false, "Copy resource files to output/resources")
 }
 
 func main() {
