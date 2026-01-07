@@ -128,7 +128,9 @@ func (m *Manager) Decompile(inputPath string, outputDir string) error {
 
 	if m.useJar {
 		// 使用Java运行CFR JAR
+		// 添加 -Dfile.encoding=UTF-8 确保输出使用UTF-8编码，解决中文乱码问题
 		args := []string{
+			"-Dfile.encoding=UTF-8",
 			"-jar", m.cfrPath,
 			inputPath,
 			"--outputdir", outputDir,
@@ -154,7 +156,8 @@ func (m *Manager) DecompileWithOptions(inputPath string, outputDir string, optio
 	var args []string
 
 	if m.useJar {
-		args = append(args, "-jar", m.cfrPath)
+		// 添加 -Dfile.encoding=UTF-8 确保输出使用UTF-8编码，解决中文乱码问题
+		args = append(args, "-Dfile.encoding=UTF-8", "-jar", m.cfrPath)
 	}
 
 	args = append(args, inputPath, "--outputdir", outputDir)
