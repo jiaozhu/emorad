@@ -99,6 +99,15 @@ func Run(inputPath, outputDir string, workers int, filterConfig *processor.Filte
 		return err
 	}
 
+	// Unicode 后处理：将 \uXXXX 转换为实际的中文字符
+	color.Cyan("\n🔤 处理 Unicode 转义序列...")
+	processed, modified, err := processor.ProcessDirectoryUnicode(outputDir)
+	if err != nil {
+		color.Yellow("⚠️  Unicode 后处理警告: %v", err)
+	} else if modified > 0 {
+		color.Green("✅ Unicode 后处理完成: 处理 %d 文件, 修复 %d 文件", processed, modified)
+	}
+
 	// 生成报告
 	return rpt.Generate()
 }
