@@ -44,6 +44,8 @@ type FilterConfig struct {
 	SkipLibs      bool     // 是否跳过 lib 目录下的 JAR
 	JarIncludes   []string // JAR 名称必须包含的关键字
 	CopyResources bool     // 是否复制配置文件到输出目录
+	CopyLibJars   bool     // 是否复制依赖 JAR 到 libs 目录
+	GenerateIDEA  bool     // 是否生成 IDEA 项目配置
 }
 
 // NewDefaultFilterConfig 创建默认过滤配置
@@ -56,8 +58,9 @@ func NewDefaultFilterConfig() *FilterConfig {
 }
 
 // ShouldProcessClass 判断是否应该处理该 class 文件
-func (f *FilterConfig) ShouldProcessClass(classPath string) bool {
-	relativePath := extractRelativePath(classPath)
+// baseDir 是解压后的临时目录
+func (f *FilterConfig) ShouldProcessClass(classPath, baseDir string) bool {
+	relativePath := extractRelativePathFromBase(classPath, baseDir)
 
 	if len(f.Includes) > 0 {
 		for _, include := range f.Includes {
@@ -106,18 +109,27 @@ func (f *FilterConfig) ShouldProcessJar(jarPath string) bool {
 	return true
 }
 
-// extractRelativePath 从 class 路径中提取相对包路径
-func extractRelativePath(classPath string) string {
-	if idx := strings.Index(classPath, "BOOT-INF/classes/"); idx != -1 {
-		return classPath[idx+len("BOOT-INF/classes/"):]
+// extractRelativePathFromBase 从 class 路径中提取相对包路径
+// baseDir 是解压后的临时目录，classPath 是 class 文件的完整路径
+func extractRelativePathFromBase(classPath, baseDir string) string {
+	// 先计算相对于临时目录的路径
+	relPath, err := filepath.Rel(baseDir, classPath)
+	if err != nil {
+		relPath = classPath
 	}
-	if idx := strings.Index(classPath, "WEB-INF/classes/"); idx != -1 {
-		return classPath[idx+len("WEB-INF/classes/"):]
+	// 转换为正斜杠形式
+	relPath = filepath.ToSlash(relPath)
+
+	// 如果是 BOOT-INF/classes 或 WEB-INF/classes 下的类，提取真正的包路径
+	if idx := strings.Index(relPath, "BOOT-INF/classes/"); idx != -1 {
+		return relPath[idx+len("BOOT-INF/classes/"):]
+	}
+	if idx := strings.Index(relPath, "WEB-INF/classes/"); idx != -1 {
+		return relPath[idx+len("WEB-INF/classes/"):]
 	}
 	// 对于 JAR 根目录下的类（如 org/springframework/boot/loader/），
-	// 返回完整相对路径以便排除规则能够匹配
-	// 将路径转换为正斜杠形式以匹配排除列表
-	return filepath.ToSlash(classPath)
+	// 直接返回相对路径
+	return relPath
 }
 
 // Processor 定义文件处理器接口
@@ -212,22 +224,32 @@ func (p *JarProcessor) Process(inputPath string, outputDir string, rpt *report.R
 			}
 		}
 		if copiedCount > 0 {
-			color.Green("✅ 复制了 %d 个配置文件", copiedCount)
+			color.Green("[OK] 复制了 %d 个配置文件", copiedCount)
 		}
 	}
 
 	filteredClasses := make([]string, 0, len(classFiles))
 	for _, classPath := range classFiles {
-		if p.filterConfig.ShouldProcessClass(classPath) {
+		if p.filterConfig.ShouldProcessClass(classPath, tempDir) {
 			filteredClasses = append(filteredClasses, classPath)
 		}
 	}
 
 	if len(classFiles) != len(filteredClasses) {
-		color.Yellow("📝 过滤后: %d/%d 个 class 文件需要处理", len(filteredClasses), len(classFiles))
+		color.Yellow("[FILTER] 过滤后: %d/%d 个 class 文件需要处理", len(filteredClasses), len(classFiles))
 	}
 
 	rpt.AddExpectedFiles(int32(len(filteredClasses)))
+
+	// 复制依赖 JAR 到 libs 目录
+	if p.filterConfig.CopyLibJars && len(nestedJars) > 0 {
+		copiedJars, err := CopyLibJars(nestedJars, outputDir)
+		if err != nil {
+			color.Yellow("[WARN] 复制依赖 JAR 失败: %v", err)
+		} else if copiedJars > 0 {
+			color.Green("[OK] 复制了 %d 个依赖 JAR 到 libs 目录", copiedJars)
+		}
+	}
 
 	for _, nestedJar := range nestedJars {
 		if !p.filterConfig.ShouldProcessJar(nestedJar) {
@@ -309,11 +331,11 @@ func (p *DirectoryProcessor) Process(inputPath string, outputDir string, rpt *re
 		return fmt.Errorf("扫描目录失败: %v", err)
 	}
 
-	color.Cyan("📊 扫描结果: %d个JAR, %d个WAR, %d个CLASS文件",
+	color.Cyan("[SCAN] 扫描结果: %d个JAR, %d个WAR, %d个CLASS文件",
 		len(jarFiles), len(warFiles), len(classFiles))
 
 	if len(jarFiles) == 0 && len(warFiles) == 0 && len(classFiles) == 0 {
-		color.Yellow("⚠️  未找到任何需要反编译的文件")
+		color.Yellow("[WARN] 未找到任何需要反编译的文件")
 		return nil
 	}
 

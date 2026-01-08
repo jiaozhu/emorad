@@ -69,6 +69,8 @@ emorad MyClass.class
 | `--exclude` | `-e` | 排除匹配的包前缀，追加到默认列表 | 无 |
 | `--jar-include` | `-j` | 只处理名称包含指定关键字的 lib JAR | 无 |
 | `--copy-resources` | `-r` | 复制配置文件到 resources 目录 | `false` |
+| `--copy-libs` | - | 复制依赖 JAR 到 libs 目录 | `false` |
+| `--idea-project` | - | 生成 IDEA 项目结构（含 .iml 文件） | `false` |
 | `--skip-libs` | - | 跳过 lib 目录下的依赖 JAR | `true` |
 | `--no-default-exclude` | - | 不使用默认的框架包排除列表 | `false` |
 | `--version` | `-v` | 显示版本信息 | - |
@@ -163,9 +165,41 @@ emorad /opt/tomcat/webapps/myapp
 emorad -i "com.mycompany" /opt/tomcat/webapps/myapp
 ```
 
-## 输出说明
+### 生成 IDEA 项目结构
 
-### 目录结构
+反编译后直接用 IntelliJ IDEA 打开，自动识别项目结构和依赖关系：
+
+```bash
+# 基本使用：生成 IDEA 项目 + 复制依赖 JAR
+emorad --idea-project --copy-libs app.jar -o ./decompiled
+
+# 完整示例：包含配置文件
+emorad --idea-project --copy-libs -r app.jar -o ./decompiled
+
+# 结合包过滤
+emorad --idea-project --copy-libs -i "com.mycompany" app.jar -o ./decompiled
+```
+
+生成后的目录结构：
+
+```
+decompiled/
+├── src/                     # 反编译的源代码
+│   └── com/example/
+├── libs/                    # 依赖 JAR 包
+│   ├── spring-core-xxx.jar
+│   └── ...
+├── resources/               # 配置文件（需 -r）
+├── reports/                 # 反编译报告
+├── .idea/                   # IDEA 配置目录
+│   ├── modules.xml
+│   └── misc.xml
+└── decompiled.iml           # IDEA 模块文件
+```
+
+使用方法：用 IDEA 打开 `decompiled` 目录即可，自动识别为 Java 项目。
+
+### 默认目录结构
 
 ```
 输出目录/
@@ -179,6 +213,19 @@ emorad -i "com.mycompany" /opt/tomcat/webapps/myapp
 └── reports/                  # 反编译报告
     ├── report-20240101-120000.html
     └── report-20240101-120000.json
+```
+
+### IDEA 项目结构（使用 --idea-project）
+
+```
+输出目录/
+├── src/                      # 反编译的源代码
+│   └── com/example/
+├── libs/                     # 依赖 JAR（使用 --copy-libs）
+├── resources/                # 配置文件（使用 -r）
+├── reports/                  # 反编译报告
+├── .idea/                    # IDEA 配置
+└── <project>.iml             # IDEA 模块文件
 ```
 
 ### 支持的配置文件类型

@@ -109,6 +109,8 @@ Without arguments, decompiles the current directory.`,
 			filterConfig := processor.NewDefaultFilterConfig()
 			filterConfig.SkipLibs = skipLibs
 			filterConfig.CopyResources, _ = cmd.Flags().GetBool("copy-resources")
+			filterConfig.CopyLibJars, _ = cmd.Flags().GetBool("copy-libs")
+			filterConfig.GenerateIDEA, _ = cmd.Flags().GetBool("idea-project")
 
 			if includes := parsePackagePrefixes(includeStr); len(includes) > 0 {
 				filterConfig.Includes = includes
@@ -147,6 +149,8 @@ Without arguments, decompiles the current directory.`,
 	rootCmd.Flags().Bool("no-default-exclude", false, "Disable default framework exclusion list")
 	rootCmd.Flags().StringP("jar-include", "j", "", "Only process lib JARs containing specified keywords")
 	rootCmd.Flags().BoolP("copy-resources", "r", false, "Copy resource files to output/resources")
+	rootCmd.Flags().Bool("copy-libs", false, "Copy dependency JARs to output/libs")
+	rootCmd.Flags().Bool("idea-project", false, "Generate IDEA project structure with .iml file")
 }
 
 func main() {
