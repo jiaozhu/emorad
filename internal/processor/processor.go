@@ -114,7 +114,10 @@ func extractRelativePath(classPath string) string {
 	if idx := strings.Index(classPath, "WEB-INF/classes/"); idx != -1 {
 		return classPath[idx+len("WEB-INF/classes/"):]
 	}
-	return filepath.Base(classPath)
+	// 对于 JAR 根目录下的类（如 org/springframework/boot/loader/），
+	// 返回完整相对路径以便排除规则能够匹配
+	// 将路径转换为正斜杠形式以匹配排除列表
+	return filepath.ToSlash(classPath)
 }
 
 // Processor 定义文件处理器接口
