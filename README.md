@@ -67,7 +67,8 @@ emorad MyClass.class
 | `--workers` | `-w` | 并发工作器数量 | CPU核心数 |
 | `--include` | `-i` | 只处理匹配的包前缀，逗号分隔 | 无（处理所有） |
 | `--exclude` | `-e` | 排除匹配的包前缀，追加到默认列表 | 无 |
-| `--jar-include` | `-j` | 只处理名称包含指定关键字的 lib JAR | 无 |
+| `--jar-include` | `-j` | 只处理名称匹配指定关键字的 lib JAR | 无 |
+| `--jar-match-mode` | - | JAR 名称匹配模式：`contains`/`prefix` | `contains` |
 | `--copy-resources` | `-r` | 复制配置文件到 resources 目录 | `false` |
 | `--copy-libs` | - | 复制依赖 JAR 到 libs 目录 | `false` |
 | `--idea-project` | - | 生成 IDEA 项目结构（含 .iml 文件） | `false` |
@@ -123,6 +124,9 @@ emorad --no-default-exclude -e "org.springframework" app.jar
 ```bash
 # 只反编译名称包含 "myapp" 或 "common" 的 lib JAR
 emorad -j "myapp,common" app.jar
+
+# 按前缀匹配依赖 JAR（例如 user-service 开头）
+emorad -j "user-service" --jar-match-mode prefix app.jar
 
 # 结合包含过滤使用
 emorad -i "com.mycompany" -j "myapp" app.jar

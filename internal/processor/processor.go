@@ -43,7 +43,8 @@ type FilterConfig struct {
 	Includes          []string // 包含的包前缀（优先级最高）
 	Excludes          []string // 排除的包前缀
 	SkipLibs          bool     // 是否跳过 lib 目录下的 JAR
-	JarIncludes       []string // JAR 名称必须包含的关键字
+	JarIncludes       []string // JAR 名称匹配关键字
+	JarMatchMode      string   // JAR匹配模式: contains/prefix
 	NestedJarStrategy string   // 嵌套JAR策略: skip/filtered/full
 	MaxJarDepth       int      // 嵌套JAR最大递归深度
 	LogFormat         string   // 日志格式: text/json
@@ -58,6 +59,7 @@ func NewDefaultFilterConfig() *FilterConfig {
 		Includes:          nil,
 		Excludes:          DefaultExcludes,
 		SkipLibs:          true,
+		JarMatchMode:      "contains",
 		NestedJarStrategy: "filtered",
 		MaxJarDepth:       8,
 		LogFormat:         "text",
@@ -87,30 +89,37 @@ func (f *FilterConfig) ShouldProcessClass(classPath, baseDir string) bool {
 	return true
 }
 
+func (f *FilterConfig) jarNameMatched(jarName string) bool {
+	if len(f.JarIncludes) == 0 {
+		return true
+	}
+	name := strings.ToLower(jarName)
+	mode := strings.ToLower(f.JarMatchMode)
+	for _, keyword := range f.JarIncludes {
+		k := strings.ToLower(keyword)
+		if mode == "prefix" {
+			if strings.HasPrefix(name, k) {
+				return true
+			}
+			continue
+		}
+		if strings.Contains(name, k) {
+			return true
+		}
+	}
+	return false
+}
+
 // ShouldProcessJar 判断是否应该处理该 JAR 文件
 func (f *FilterConfig) ShouldProcessJar(jarPath string) bool {
 	isLibJar := strings.Contains(jarPath, "BOOT-INF/lib") || strings.Contains(jarPath, "WEB-INF/lib")
 
 	if isLibJar {
 		if f.SkipLibs {
-			if len(f.JarIncludes) > 0 {
-				jarName := strings.ToLower(filepath.Base(jarPath))
-				for _, keyword := range f.JarIncludes {
-					if strings.Contains(jarName, strings.ToLower(keyword)) {
-						return true
-					}
-				}
-			}
-			return false
+			return f.jarNameMatched(filepath.Base(jarPath))
 		}
 		if len(f.JarIncludes) > 0 {
-			jarName := strings.ToLower(filepath.Base(jarPath))
-			for _, keyword := range f.JarIncludes {
-				if strings.Contains(jarName, strings.ToLower(keyword)) {
-					return true
-				}
-			}
-			return false
+			return f.jarNameMatched(filepath.Base(jarPath))
 		}
 	}
 	return true

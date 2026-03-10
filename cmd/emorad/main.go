@@ -109,6 +109,7 @@ Without arguments, decompiles the current directory.`,
 			includeStr, _ := cmd.Flags().GetString("include")
 			excludeStr, _ := cmd.Flags().GetString("exclude")
 			jarIncludeStr, _ := cmd.Flags().GetString("jar-include")
+			jarMatchMode, _ := cmd.Flags().GetString("jar-match-mode")
 			skipLibs, _ := cmd.Flags().GetBool("skip-libs")
 			noDefaultExclude, _ := cmd.Flags().GetBool("no-default-exclude")
 			nestedJarStrategy, _ := cmd.Flags().GetString("nested-jar-strategy")
@@ -117,6 +118,7 @@ Without arguments, decompiles the current directory.`,
 
 			filterConfig := processor.NewDefaultFilterConfig()
 			filterConfig.SkipLibs = skipLibs
+			filterConfig.JarMatchMode = strings.ToLower(jarMatchMode)
 			filterConfig.NestedJarStrategy = nestedJarStrategy
 			filterConfig.MaxJarDepth = maxJarDepth
 			filterConfig.LogFormat = strings.ToLower(logFormat)
@@ -160,6 +162,10 @@ Without arguments, decompiles the current directory.`,
 				color.Red("Error: --log-format must be text or json")
 				return
 			}
+			if filterConfig.JarMatchMode != "contains" && filterConfig.JarMatchMode != "prefix" {
+				color.Red("Error: --jar-match-mode must be contains or prefix")
+				return
+			}
 
 			if err := decompile.Run(ctx, absInputPath, outputDir, workers, filterConfig); err != nil {
 				color.Red("Decompile failed: %v", err)
@@ -174,7 +180,8 @@ Without arguments, decompiles the current directory.`,
 	rootCmd.Flags().StringP("exclude", "e", "", "Exclude matching package prefixes, comma-separated")
 	rootCmd.Flags().Bool("skip-libs", true, "Skip JAR files in lib directory")
 	rootCmd.Flags().Bool("no-default-exclude", false, "Disable default framework exclusion list")
-	rootCmd.Flags().StringP("jar-include", "j", "", "Only process lib JARs containing specified keywords")
+	rootCmd.Flags().StringP("jar-include", "j", "", "Only process lib JARs matching specified keywords")
+	rootCmd.Flags().String("jar-match-mode", "contains", "JAR match mode: contains or prefix")
 	rootCmd.Flags().String("nested-jar-strategy", "filtered", "Nested JAR strategy: skip | filtered | full")
 	rootCmd.Flags().Int("max-jar-depth", 8, "Maximum nested JAR recursion depth")
 	rootCmd.Flags().String("log-format", "text", "Log format: text or json")

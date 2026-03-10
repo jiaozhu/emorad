@@ -54,7 +54,7 @@ func Run(ctx context.Context, inputPath, outputDir string, workers int, filterCo
 		color.Yellow("[CONFIG] 跳过依赖库: 已启用")
 	}
 	if len(filterConfig.JarIncludes) > 0 {
-		color.Green("[FILTER] JAR 名称过滤: %v", filterConfig.JarIncludes)
+		color.Green("[FILTER] JAR 名称过滤(%s): %v", filterConfig.JarMatchMode, filterConfig.JarIncludes)
 	}
 	color.Green("[CONFIG] 嵌套JAR策略: %s (max-depth=%d)", filterConfig.NestedJarStrategy, filterConfig.MaxJarDepth)
 	if filterConfig.CopyResources {
