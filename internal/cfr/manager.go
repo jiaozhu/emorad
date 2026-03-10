@@ -1,6 +1,7 @@
 package cfr
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -123,7 +124,7 @@ func (m *Manager) downloadCFR(destPath string) error {
 }
 
 // Decompile 反编译class文件或JAR文件
-func (m *Manager) Decompile(inputPath string, outputDir string) error {
+func (m *Manager) Decompile(ctx context.Context, inputPath string, outputDir string) error {
 	var cmd *exec.Cmd
 
 	if m.useJar {
@@ -136,10 +137,10 @@ func (m *Manager) Decompile(inputPath string, outputDir string) error {
 			"--outputdir", outputDir,
 			"--caseinsensitivefs", "true", // Windows兼容
 		}
-		cmd = exec.Command(m.javaPath, args...)
+		cmd = exec.CommandContext(ctx, m.javaPath, args...)
 	} else {
 		// 使用系统CFR命令
-		cmd = exec.Command(m.cfrPath, inputPath, "--outputdir", outputDir)
+		cmd = exec.CommandContext(ctx, m.cfrPath, inputPath, "--outputdir", outputDir)
 	}
 
 	// 捕获输出

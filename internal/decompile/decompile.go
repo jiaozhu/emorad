@@ -1,6 +1,7 @@
 package decompile
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,7 +14,7 @@ import (
 )
 
 // Run 执行反编译操作
-func Run(inputPath, outputDir string, workers int, filterConfig *processor.FilterConfig) error {
+func Run(ctx context.Context, inputPath, outputDir string, workers int, filterConfig *processor.FilterConfig) error {
 
 	color.Cyan("\n[START] 开始反编译...")
 	color.Cyan("============================================")
@@ -102,7 +103,7 @@ func Run(inputPath, outputDir string, workers int, filterConfig *processor.Filte
 	color.Cyan("============================================\n")
 
 	// 执行处理
-	if err := proc.Process(inputPath, srcDir, rpt); err != nil {
+	if err := proc.Process(ctx, inputPath, srcDir, rpt); err != nil {
 		color.Red("\n[ERROR] 处理失败: %v", err)
 		// 即使有错误也生成报告
 		rpt.Generate()

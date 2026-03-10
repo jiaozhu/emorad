@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 
 	"github.com/fatih/color"
 	"github.com/jiaozhu/emorad/internal/decompile"
@@ -63,6 +66,9 @@ Automatically filters framework code and generates HTML/JSON reports.
 Without arguments, decompiles the current directory.`,
 		Version: Version,
 		Run: func(cmd *cobra.Command, args []string) {
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+
 			var inputPath string
 			var err error
 
@@ -134,7 +140,7 @@ Without arguments, decompiles the current directory.`,
 				}
 			}
 
-			if err := decompile.Run(absInputPath, outputDir, workers, filterConfig); err != nil {
+			if err := decompile.Run(ctx, absInputPath, outputDir, workers, filterConfig); err != nil {
 				color.Red("Decompile failed: %v", err)
 				return
 			}

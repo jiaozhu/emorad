@@ -2,6 +2,7 @@ package processor
 
 import (
 	"archive/zip"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -134,7 +135,7 @@ func extractRelativePathFromBase(classPath, baseDir string) string {
 
 // Processor 定义文件处理器接口
 type Processor interface {
-	Process(inputPath string, outputDir string, rpt *report.Report) error
+	Process(ctx context.Context, inputPath string, outputDir string, rpt *report.Report) error
 	GetType() string
 }
 
@@ -151,7 +152,7 @@ func (p *ClassProcessor) GetType() string {
 	return "class"
 }
 
-func (p *ClassProcessor) Process(inputPath string, outputDir string, rpt *report.Report) error {
+func (p *ClassProcessor) Process(ctx context.Context, inputPath string, outputDir string, rpt *report.Report) error {
 	startTime := time.Now()
 	result := report.Result{
 		ClassName:   filepath.Base(inputPath),
@@ -160,7 +161,7 @@ func (p *ClassProcessor) Process(inputPath string, outputDir string, rpt *report
 		TimeStamp:   startTime,
 	}
 
-	err := p.cfrManager.Decompile(inputPath, outputDir)
+	err := p.cfrManager.Decompile(ctx, inputPath, outputDir)
 	if err != nil {
 		result.Success = false
 		result.Error = fmt.Sprintf("反编译失败: %v", err)
@@ -194,7 +195,10 @@ func (p *JarProcessor) GetType() string {
 	return "jar"
 }
 
-func (p *JarProcessor) Process(inputPath string, outputDir string, rpt *report.Report) error {
+func (p *JarProcessor) Process(ctx context.Context, inputPath string, outputDir string, rpt *report.Report) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	color.Cyan("正在处理JAR文件: %s", filepath.Base(inputPath))
 
 	tempDir := filepath.Join(os.TempDir(), fmt.Sprintf("emorad-%s-%d",
@@ -252,20 +256,23 @@ func (p *JarProcessor) Process(inputPath string, outputDir string, rpt *report.R
 	}
 
 	for _, nestedJar := range nestedJars {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		if !p.filterConfig.ShouldProcessJar(nestedJar) {
 			continue
 		}
 		color.Yellow("处理嵌套JAR: %s", filepath.Base(nestedJar))
 		nestedProcessor := NewJarProcessor(p.cfrManager, p.workers, p.filterConfig)
-		if err := nestedProcessor.Process(nestedJar, outputDir, rpt); err != nil {
+		if err := nestedProcessor.Process(ctx, nestedJar, outputDir, rpt); err != nil {
 			color.Red("处理嵌套JAR失败: %v", err)
 		}
 	}
 
-	return p.processClassFiles(filteredClasses, outputDir, rpt)
+	return p.processClassFiles(ctx, filteredClasses, outputDir, rpt)
 }
 
-func (p *JarProcessor) processClassFiles(classFiles []string, outputDir string, rpt *report.Report) error {
+func (p *JarProcessor) processClassFiles(ctx context.Context, classFiles []string, outputDir string, rpt *report.Report) error {
 	jobs := make(chan string, len(classFiles))
 	var wg sync.WaitGroup
 
@@ -275,17 +282,26 @@ func (p *JarProcessor) processClassFiles(classFiles []string, outputDir string, 
 			defer wg.Done()
 			processor := NewClassProcessor(p.cfrManager)
 			for classPath := range jobs {
-				processor.Process(classPath, outputDir, rpt)
+				if ctx.Err() != nil {
+					return
+				}
+				processor.Process(ctx, classPath, outputDir, rpt)
 			}
 		}()
 	}
 
 	for _, file := range classFiles {
+		if ctx.Err() != nil {
+			break
+		}
 		jobs <- file
 	}
 	close(jobs)
 
 	wg.Wait()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	return nil
 }
 
@@ -323,7 +339,10 @@ func (p *DirectoryProcessor) GetType() string {
 	return "directory"
 }
 
-func (p *DirectoryProcessor) Process(inputPath string, outputDir string, rpt *report.Report) error {
+func (p *DirectoryProcessor) Process(ctx context.Context, inputPath string, outputDir string, rpt *report.Report) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	color.Cyan("正在处理目录: %s", inputPath)
 
 	classFiles, jarFiles, warFiles, err := ScanDirectoryComplete(inputPath, outputDir)
@@ -342,17 +361,23 @@ func (p *DirectoryProcessor) Process(inputPath string, outputDir string, rpt *re
 	rpt.AddExpectedFiles(int32(len(classFiles)))
 
 	for _, jarPath := range jarFiles {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		color.Yellow("处理JAR文件: %s", filepath.Base(jarPath))
 		jarProcessor := NewJarProcessor(p.cfrManager, p.workers, p.filterConfig)
-		if err := jarProcessor.Process(jarPath, outputDir, rpt); err != nil {
+		if err := jarProcessor.Process(ctx, jarPath, outputDir, rpt); err != nil {
 			color.Red("处理JAR失败: %v", err)
 		}
 	}
 
 	for _, warPath := range warFiles {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		color.Yellow("处理WAR文件: %s", filepath.Base(warPath))
 		warProcessor := NewWarProcessor(p.cfrManager, p.workers, p.filterConfig)
-		if err := warProcessor.Process(warPath, outputDir, rpt); err != nil {
+		if err := warProcessor.Process(ctx, warPath, outputDir, rpt); err != nil {
 			color.Red("处理WAR失败: %v", err)
 		}
 	}
@@ -367,16 +392,26 @@ func (p *DirectoryProcessor) Process(inputPath string, outputDir string, rpt *re
 				defer wg.Done()
 				proc := NewClassProcessor(p.cfrManager)
 				for classPath := range jobs {
-					proc.Process(classPath, outputDir, rpt)
+					if ctx.Err() != nil {
+						return
+					}
+					proc.Process(ctx, classPath, outputDir, rpt)
 				}
 			}()
 		}
 
 		for _, file := range classFiles {
+			if ctx.Err() != nil {
+				break
+			}
 			jobs <- file
 		}
 		close(jobs)
 		wg.Wait()
+	}
+
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
 
 	return nil
