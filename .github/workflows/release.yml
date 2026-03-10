@@ -1,4 +1,4 @@
-name: Release
+name: release
 
 on:
   push:
@@ -7,83 +7,259 @@ on:
 
 permissions:
   contents: write
+  pull-requests: read
+  issues: read
 
 jobs:
-  build:
-    name: Build
+  verify:
     runs-on: ubuntu-latest
-    
-    strategy:
-      matrix:
-        include:
-          - goos: darwin
-            goarch: amd64
-            suffix: darwin-amd64
-          - goos: darwin
-            goarch: arm64
-            suffix: darwin-arm64
-          - goos: linux
-            goarch: amd64
-            suffix: linux-amd64
-          - goos: linux
-            goarch: arm64
-            suffix: linux-arm64
-          - goos: windows
-            goarch: amd64
-            suffix: windows-amd64.exe
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Go
+      - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version-file: go.mod
+          cache: true
 
-      - name: Get version
-        id: version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+      - name: Download dependencies
+        run: go mod download
 
-      - name: Build
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-        run: |
-          go build -ldflags "-X main.Version=${{ steps.version.outputs.VERSION }} -X main.BuildTime=$(date -u +%Y-%m-%d_%H:%M:%S) -s -w" \
-            -o emorad-${{ matrix.suffix }} ./cmd/emorad
+      - name: Go vet
+        run: go vet ./...
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: emorad-${{ matrix.suffix }}
-          path: emorad-${{ matrix.suffix }}
+      - name: Go test
+        run: go test ./...
 
-  release:
-    name: Release
-    needs: build
+  build:
+    needs: verify
     runs-on: ubuntu-latest
-    
     steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
-          path: artifacts
+          fetch-depth: 0
 
-      - name: Prepare release files
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build release artifacts
+        env:
+          VERSION: ${{ github.ref_name }}
         run: |
-          mkdir -p release
-          find artifacts -type f -name 'emorad-*' -exec mv {} release/ \;
-          cd release
-          for f in emorad-*; do
-            if [[ "$f" != *.exe ]]; then
-              chmod +x "$f"
+          set -euo pipefail
+          VERSION_NO_V="${VERSION#v}"
+          BUILD_TIME="$(date -u +'%Y-%m-%d_%H:%M:%S')"
+
+          mkdir -p dist
+
+          TARGETS=(
+            "darwin amd64"
+            "darwin arm64"
+            "linux amd64"
+            "linux arm64"
+            "windows amd64"
+            "windows arm64"
+          )
+
+          for target in "${TARGETS[@]}"; do
+            GOOS="$(echo "$target" | awk '{print $1}')"
+            GOARCH="$(echo "$target" | awk '{print $2}')"
+
+            if [ "$GOOS" = "windows" ]; then
+              BIN_NAME="emorad-${VERSION_NO_V}-${GOOS}-${GOARCH}.exe"
+            else
+              BIN_NAME="emorad-${VERSION_NO_V}-${GOOS}-${GOARCH}"
             fi
-            sha256sum "$f" > "$f.sha256"
+
+            echo "Building ${BIN_NAME}..."
+            GOOS="$GOOS" GOARCH="$GOARCH" \
+              go build -trimpath \
+              -ldflags "-s -w -X main.Version=${VERSION} -X main.BuildTime=${BUILD_TIME}" \
+              -o "dist/${BIN_NAME}" ./cmd/emorad
+
+            if [ "$GOOS" = "windows" ]; then
+              (cd dist && zip -q "${BIN_NAME}.zip" "${BIN_NAME}")
+              rm -f "dist/${BIN_NAME}"
+            else
+              tar -czf "dist/${BIN_NAME}.tar.gz" -C dist "${BIN_NAME}"
+              rm -f "dist/${BIN_NAME}"
+            fi
           done
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
+          (cd dist && shasum -a 256 *.tar.gz *.zip > checksums.txt)
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
         with:
-          files: release/*
-          generate_release_notes: true
+          name: release-artifacts
+          path: dist/*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-artifacts
+          path: dist
+
+      - name: Detect previous tag
+        id: tags
+        run: |
+          set -euo pipefail
+          CURRENT_TAG="${GITHUB_REF_NAME}"
+          PREV_TAG="$(git tag --sort=-creatordate | grep '^v' | grep -v "^${CURRENT_TAG}$" | head -n 1 || true)"
+          echo "previous_tag=${PREV_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Extract changelog section
+        id: changelog
+        run: |
+          set -euo pipefail
+
+          if [ ! -f CHANGELOG.md ]; then
+            echo "- No CHANGELOG.md found." > changelog_section.md
+            exit 0
+          fi
+
+          VERSION_NO_V="${GITHUB_REF_NAME#v}"
+          TARGET_HEADER="## [${VERSION_NO_V}]"
+
+          if grep -qF "$TARGET_HEADER" CHANGELOG.md; then
+            awk -v h="$TARGET_HEADER" '
+              $0 == h {found=1; next}
+              /^## \[/ && found {exit}
+              found {print}
+            ' CHANGELOG.md > changelog_section.md
+          else
+            awk '
+              /^## \[Unreleased\]/ {found=1; next}
+              /^## \[/ && found {exit}
+              found {print}
+            ' CHANGELOG.md > changelog_section.md
+          fi
+
+          if [ ! -s changelog_section.md ]; then
+            echo "- No changelog section found for this release." > changelog_section.md
+          fi
+
+      - name: Collect related issues
+        id: issues
+        uses: actions/github-script@v7
+        env:
+          PREV_TAG: ${{ steps.tags.outputs.previous_tag }}
+        with:
+          script: |
+            const fs = require('fs');
+
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const previousTag = process.env.PREV_TAG || '';
+
+            let sinceIso = null;
+            if (previousTag) {
+              const prev = await github.rest.repos.getReleaseByTag({ owner, repo, tag: previousTag }).catch(() => null);
+              if (prev && prev.data && prev.data.published_at) {
+                sinceIso = prev.data.published_at;
+              }
+            }
+
+            const issueLines = [];
+            const perPage = 100;
+            let page = 1;
+
+            while (true) {
+              const { data } = await github.rest.issues.listForRepo({
+                owner,
+                repo,
+                state: 'closed',
+                per_page: perPage,
+                page,
+                sort: 'updated',
+                direction: 'desc'
+              });
+
+              if (data.length === 0) break;
+
+              for (const it of data) {
+                if (it.pull_request) continue;
+                if (sinceIso && new Date(it.closed_at) < new Date(sinceIso)) {
+                  continue;
+                }
+                issueLines.push(`- #${it.number} ${it.title}`);
+              }
+
+              if (data.length < perPage) break;
+              page += 1;
+              if (page > 10) break;
+            }
+
+            const content = issueLines.length
+              ? issueLines.join('\n')
+              : '- No closed issues detected in this release window.';
+
+            fs.writeFileSync('issues_section.md', content + '\n');
+
+      - name: Generate GitHub release notes block
+        id: generated_notes
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const tag = context.ref.replace('refs/tags/', '');
+            const previousTag = `${{ steps.tags.outputs.previous_tag }}`;
+
+            const resp = await github.rest.repos.generateReleaseNotes({
+              owner,
+              repo,
+              tag_name: tag,
+              previous_tag_name: previousTag || undefined,
+              target_commitish: context.sha,
+            });
+
+            fs.writeFileSync('generated_release_notes.md', resp.data.body + '\n');
+
+      - name: Compose release notes
+        run: |
+          cat > RELEASE_NOTES.md <<'MD'
+          ## Changelog highlights
+
+          MD
+          cat changelog_section.md >> RELEASE_NOTES.md
+
+          cat >> RELEASE_NOTES.md <<'MD'
+
+          ## Related issues
+
+          MD
+          cat issues_section.md >> RELEASE_NOTES.md
+
+          cat >> RELEASE_NOTES.md <<'MD'
+
+          ---
+
+          ## GitHub generated notes (PRs / contributors)
+
+          MD
+          cat generated_release_notes.md >> RELEASE_NOTES.md
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: RELEASE_NOTES.md
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt
