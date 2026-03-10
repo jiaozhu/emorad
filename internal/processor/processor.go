@@ -44,6 +44,7 @@ type FilterConfig struct {
 	Excludes      []string // 排除的包前缀
 	SkipLibs      bool     // 是否跳过 lib 目录下的 JAR
 	JarIncludes   []string // JAR 名称必须包含的关键字
+	LogFormat     string   // 日志格式: text/json
 	CopyResources bool     // 是否复制配置文件到输出目录
 	CopyLibJars   bool     // 是否复制依赖 JAR 到 libs 目录
 	GenerateIDEA  bool     // 是否生成 IDEA 项目配置
@@ -52,9 +53,10 @@ type FilterConfig struct {
 // NewDefaultFilterConfig 创建默认过滤配置
 func NewDefaultFilterConfig() *FilterConfig {
 	return &FilterConfig{
-		Includes: nil,
-		Excludes: DefaultExcludes,
-		SkipLibs: true,
+		Includes:  nil,
+		Excludes:  DefaultExcludes,
+		SkipLibs:  true,
+		LogFormat: "text",
 	}
 }
 

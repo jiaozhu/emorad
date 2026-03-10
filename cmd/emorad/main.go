@@ -111,9 +111,11 @@ Without arguments, decompiles the current directory.`,
 			jarIncludeStr, _ := cmd.Flags().GetString("jar-include")
 			skipLibs, _ := cmd.Flags().GetBool("skip-libs")
 			noDefaultExclude, _ := cmd.Flags().GetBool("no-default-exclude")
+			logFormat, _ := cmd.Flags().GetString("log-format")
 
 			filterConfig := processor.NewDefaultFilterConfig()
 			filterConfig.SkipLibs = skipLibs
+			filterConfig.LogFormat = strings.ToLower(logFormat)
 			filterConfig.CopyResources, _ = cmd.Flags().GetBool("copy-resources")
 			filterConfig.CopyLibJars, _ = cmd.Flags().GetBool("copy-libs")
 			filterConfig.GenerateIDEA, _ = cmd.Flags().GetBool("idea-project")
@@ -140,6 +142,11 @@ Without arguments, decompiles the current directory.`,
 				}
 			}
 
+			if filterConfig.LogFormat != "text" && filterConfig.LogFormat != "json" {
+				color.Red("Error: --log-format must be text or json")
+				return
+			}
+
 			if err := decompile.Run(ctx, absInputPath, outputDir, workers, filterConfig); err != nil {
 				color.Red("Decompile failed: %v", err)
 				return
@@ -154,6 +161,7 @@ Without arguments, decompiles the current directory.`,
 	rootCmd.Flags().Bool("skip-libs", true, "Skip JAR files in lib directory")
 	rootCmd.Flags().Bool("no-default-exclude", false, "Disable default framework exclusion list")
 	rootCmd.Flags().StringP("jar-include", "j", "", "Only process lib JARs containing specified keywords")
+	rootCmd.Flags().String("log-format", "text", "Log format: text or json")
 	rootCmd.Flags().BoolP("copy-resources", "r", false, "Copy resource files to output/resources")
 	rootCmd.Flags().Bool("copy-libs", false, "Copy dependency JARs to output/libs")
 	rootCmd.Flags().Bool("idea-project", false, "Generate IDEA project structure with .iml file")

@@ -28,27 +28,29 @@ type Result struct {
 
 // Report 表示整体反编译报告
 type Report struct {
-	InputPath     string     `json:"inputPath"`
-	OutputPath    string     `json:"outputPath"`
-	StartTime     time.Time  `json:"startTime"`
-	EndTime       time.Time  `json:"endTime"`
-	Status        string     `json:"status"`
-	TotalFiles    int32      `json:"totalFiles"`    // 已处理的文件数
-	ExpectedFiles int32      `json:"expectedFiles"` // 预期要处理的总文件数
-	SuccessCount  int32      `json:"successCount"`
-	FailureCount  int32      `json:"failureCount"`
-	Results       []Result   `json:"results"`
-	mu            sync.Mutex // 保护Results切片
+	InputPath      string             `json:"inputPath"`
+	OutputPath     string             `json:"outputPath"`
+	StartTime      time.Time          `json:"startTime"`
+	EndTime        time.Time          `json:"endTime"`
+	Status         string             `json:"status"`
+	TotalFiles     int32              `json:"totalFiles"`    // 已处理的文件数
+	ExpectedFiles  int32              `json:"expectedFiles"` // 预期要处理的总文件数
+	SuccessCount   int32              `json:"successCount"`
+	FailureCount   int32              `json:"failureCount"`
+	StageDurations map[string]float64 `json:"stageDurations,omitempty"`
+	Results        []Result           `json:"results"`
+	mu             sync.Mutex         // 保护Results切片
 }
 
 // New 创建新的反编译报告
 func New(inputPath, outputPath string) *Report {
 	return &Report{
-		InputPath:  inputPath,
-		OutputPath: outputPath,
-		StartTime:  time.Now(),
-		Status:     "completed",
-		Results:    make([]Result, 0),
+		InputPath:      inputPath,
+		OutputPath:     outputPath,
+		StartTime:      time.Now(),
+		Status:         "completed",
+		StageDurations: make(map[string]float64),
+		Results:        make([]Result, 0),
 	}
 }
 
@@ -94,6 +96,12 @@ func (r *Report) MarkCancelled() {
 	r.Status = "cancelled"
 }
 
+func (r *Report) AddStageDuration(stage string, seconds float64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.StageDurations[stage] = seconds
+}
+
 // Generate 生成最终报告
 func (r *Report) Generate() error {
 	r.EndTime = time.Now()
@@ -133,6 +141,14 @@ func (r *Report) Generate() error {
 		successCount,
 		failureCount,
 		getSuccessRate(successCount, totalFiles))
+
+	if len(r.StageDurations) > 0 {
+		fmt.Println("阶段耗时(秒):")
+		for stage, sec := range r.StageDurations {
+			fmt.Printf("   - %s: %.3f\n", stage, sec)
+		}
+		fmt.Println()
+	}
 
 	// 生成详细报告文件
 	if err := r.saveDetailedReports(); err != nil {
