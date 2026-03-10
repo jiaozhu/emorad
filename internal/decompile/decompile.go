@@ -104,6 +104,12 @@ func Run(ctx context.Context, inputPath, outputDir string, workers int, filterCo
 
 	// 执行处理
 	if err := proc.Process(ctx, inputPath, srcDir, rpt); err != nil {
+		if err == context.Canceled || err == context.DeadlineExceeded {
+			color.Yellow("\n[CANCEL] 任务已中断: %v", err)
+			rpt.MarkCancelled()
+			_ = rpt.Generate()
+			return err
+		}
 		color.Red("\n[ERROR] 处理失败: %v", err)
 		// 即使有错误也生成报告
 		rpt.Generate()
