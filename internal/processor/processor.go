@@ -40,21 +40,25 @@ var DefaultExcludes = []string{
 
 // FilterConfig 过滤配置
 type FilterConfig struct {
-	Includes      []string // 包含的包前缀（优先级最高）
-	Excludes      []string // 排除的包前缀
-	SkipLibs      bool     // 是否跳过 lib 目录下的 JAR
-	JarIncludes   []string // JAR 名称必须包含的关键字
-	CopyResources bool     // 是否复制配置文件到输出目录
-	CopyLibJars   bool     // 是否复制依赖 JAR 到 libs 目录
-	GenerateIDEA  bool     // 是否生成 IDEA 项目配置
+	Includes          []string // 包含的包前缀（优先级最高）
+	Excludes          []string // 排除的包前缀
+	SkipLibs          bool     // 是否跳过 lib 目录下的 JAR
+	JarIncludes       []string // JAR 名称必须包含的关键字
+	NestedJarStrategy string   // 嵌套JAR策略: skip/filtered/full
+	MaxJarDepth       int      // 嵌套JAR最大递归深度
+	CopyResources     bool     // 是否复制配置文件到输出目录
+	CopyLibJars       bool     // 是否复制依赖 JAR 到 libs 目录
+	GenerateIDEA      bool     // 是否生成 IDEA 项目配置
 }
 
 // NewDefaultFilterConfig 创建默认过滤配置
 func NewDefaultFilterConfig() *FilterConfig {
 	return &FilterConfig{
-		Includes: nil,
-		Excludes: DefaultExcludes,
-		SkipLibs: true,
+		Includes:          nil,
+		Excludes:          DefaultExcludes,
+		SkipLibs:          true,
+		NestedJarStrategy: "filtered",
+		MaxJarDepth:       8,
 	}
 }
 
@@ -196,10 +200,25 @@ func (p *JarProcessor) GetType() string {
 }
 
 func (p *JarProcessor) Process(ctx context.Context, inputPath string, outputDir string, rpt *report.Report) error {
+	return p.processJar(ctx, inputPath, outputDir, rpt, 0)
+}
+
+func (p *JarProcessor) shouldProcessNestedJar(jarPath string) bool {
+	switch strings.ToLower(p.filterConfig.NestedJarStrategy) {
+	case "skip":
+		return false
+	case "full":
+		return true
+	default: // filtered
+		return p.filterConfig.ShouldProcessJar(jarPath)
+	}
+}
+
+func (p *JarProcessor) processJar(ctx context.Context, inputPath string, outputDir string, rpt *report.Report, depth int) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	color.Cyan("正在处理JAR文件: %s", filepath.Base(inputPath))
+	color.Cyan("正在处理JAR文件(depth=%d): %s", depth, filepath.Base(inputPath))
 
 	tempDir := filepath.Join(os.TempDir(), fmt.Sprintf("emorad-%s-%d",
 		filepath.Base(inputPath), time.Now().Unix()))
@@ -255,16 +274,28 @@ func (p *JarProcessor) Process(ctx context.Context, inputPath string, outputDir 
 		}
 	}
 
+	rpt.AddNestedStats(int32(len(nestedJars)), 0, 0)
+
+	if depth >= p.filterConfig.MaxJarDepth {
+		if len(nestedJars) > 0 {
+			color.Yellow("[FILTER] 已达最大嵌套深度 %d，跳过 %d 个嵌套JAR", p.filterConfig.MaxJarDepth, len(nestedJars))
+			rpt.AddNestedStats(0, 0, int32(len(nestedJars)))
+		}
+		return p.processClassFiles(ctx, filteredClasses, outputDir, rpt)
+	}
+
 	for _, nestedJar := range nestedJars {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if !p.filterConfig.ShouldProcessJar(nestedJar) {
+		if !p.shouldProcessNestedJar(nestedJar) {
+			rpt.AddNestedStats(0, 0, 1)
 			continue
 		}
-		color.Yellow("处理嵌套JAR: %s", filepath.Base(nestedJar))
+		rpt.AddNestedStats(0, 1, 0)
+		color.Yellow("处理嵌套JAR(depth=%d): %s", depth+1, filepath.Base(nestedJar))
 		nestedProcessor := NewJarProcessor(p.cfrManager, p.workers, p.filterConfig)
-		if err := nestedProcessor.Process(ctx, nestedJar, outputDir, rpt); err != nil {
+		if err := nestedProcessor.processJar(ctx, nestedJar, outputDir, rpt, depth+1); err != nil {
 			color.Red("处理嵌套JAR失败: %v", err)
 		}
 	}
