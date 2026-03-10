@@ -37,6 +37,9 @@ type Report struct {
 	ExpectedFiles int32      `json:"expectedFiles"` // 预期要处理的总文件数
 	SuccessCount  int32      `json:"successCount"`
 	FailureCount  int32      `json:"failureCount"`
+	NestedFound   int32      `json:"nestedFound"`
+	NestedHandled int32      `json:"nestedHandled"`
+	NestedSkipped int32      `json:"nestedSkipped"`
 	Results       []Result   `json:"results"`
 	mu            sync.Mutex // 保护Results切片
 }
@@ -90,6 +93,12 @@ func (r *Report) AddExpectedFiles(count int32) {
 	atomic.AddInt32(&r.ExpectedFiles, count)
 }
 
+func (r *Report) AddNestedStats(found, handled, skipped int32) {
+	atomic.AddInt32(&r.NestedFound, found)
+	atomic.AddInt32(&r.NestedHandled, handled)
+	atomic.AddInt32(&r.NestedSkipped, skipped)
+}
+
 func (r *Report) MarkCancelled() {
 	r.Status = "cancelled"
 }
@@ -101,6 +110,9 @@ func (r *Report) Generate() error {
 	successCount := atomic.LoadInt32(&r.SuccessCount)
 	failureCount := atomic.LoadInt32(&r.FailureCount)
 	totalFiles := atomic.LoadInt32(&r.TotalFiles)
+	nestedFound := atomic.LoadInt32(&r.NestedFound)
+	nestedHandled := atomic.LoadInt32(&r.NestedHandled)
+	nestedSkipped := atomic.LoadInt32(&r.NestedSkipped)
 
 	// 清除进度显示的行
 	fmt.Print("\r" + strings.Repeat(" ", consoleWidth) + "\r")
@@ -123,6 +135,11 @@ func (r *Report) Generate() error {
    - 失败数量: %d
    - 成功率: %.2f%%
 
+嵌套JAR统计:
+   - 发现数量: %d
+   - 处理数量: %d
+   - 跳过数量: %d
+
 ============================================
 `,
 		r.InputPath,
@@ -132,7 +149,10 @@ func (r *Report) Generate() error {
 		totalFiles,
 		successCount,
 		failureCount,
-		getSuccessRate(successCount, totalFiles))
+		getSuccessRate(successCount, totalFiles),
+		nestedFound,
+		nestedHandled,
+		nestedSkipped)
 
 	// 生成详细报告文件
 	if err := r.saveDetailedReports(); err != nil {
