@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/fatih/color"
 	"github.com/jiaozhu/emorad/internal/cfr"
@@ -112,6 +113,15 @@ func Run(ctx context.Context, inputPath, outputDir string, workers int, filterCo
 			return err
 		}
 		color.Red("\n[ERROR] 处理失败: %v", err)
+		rpt.AddResult(report.Result{
+			ClassName: filepath.Base(inputPath),
+			FilePath:  inputPath,
+			Stage:     "process",
+			ErrorCode: "PROCESS_FAILED",
+			Success:   false,
+			Error:     err.Error(),
+			TimeStamp: time.Now(),
+		})
 		// 即使有错误也生成报告
 		rpt.Generate()
 		return err

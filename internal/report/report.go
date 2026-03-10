@@ -20,6 +20,9 @@ const consoleWidth = 80
 type Result struct {
 	ClassName   string    `json:"className"`
 	PackageName string    `json:"packageName"`
+	FilePath    string    `json:"filePath,omitempty"`
+	Stage       string    `json:"stage,omitempty"`
+	ErrorCode   string    `json:"errorCode,omitempty"`
 	Success     bool      `json:"success"`
 	Error       string    `json:"error,omitempty"`
 	TimeTaken   float64   `json:"timeTaken"`
@@ -28,30 +31,34 @@ type Result struct {
 
 // Report 表示整体反编译报告
 type Report struct {
-	InputPath     string     `json:"inputPath"`
-	OutputPath    string     `json:"outputPath"`
-	StartTime     time.Time  `json:"startTime"`
-	EndTime       time.Time  `json:"endTime"`
-	Status        string     `json:"status"`
-	TotalFiles    int32      `json:"totalFiles"`    // 已处理的文件数
-	ExpectedFiles int32      `json:"expectedFiles"` // 预期要处理的总文件数
-	SuccessCount  int32      `json:"successCount"`
-	FailureCount  int32      `json:"failureCount"`
-	NestedFound   int32      `json:"nestedFound"`
-	NestedHandled int32      `json:"nestedHandled"`
-	NestedSkipped int32      `json:"nestedSkipped"`
-	Results       []Result   `json:"results"`
-	mu            sync.Mutex // 保护Results切片
+	InputPath      string             `json:"inputPath"`
+	OutputPath     string             `json:"outputPath"`
+	StartTime      time.Time          `json:"startTime"`
+	EndTime        time.Time          `json:"endTime"`
+	Status         string             `json:"status"`
+	TotalFiles     int32              `json:"totalFiles"`    // 已处理的文件数
+	ExpectedFiles  int32              `json:"expectedFiles"` // 预期要处理的总文件数
+	SuccessCount   int32              `json:"successCount"`
+	FailureCount   int32              `json:"failureCount"`
+	NestedFound    int32              `json:"nestedFound"`
+	NestedHandled  int32              `json:"nestedHandled"`
+	NestedSkipped  int32              `json:"nestedSkipped"`
+	StageFailures  map[string]int     `json:"stageFailures,omitempty"`
+	StageDurations map[string]float64 `json:"stageDurations,omitempty"`
+	Results        []Result           `json:"results"`
+	mu             sync.Mutex         // 保护Results切片
 }
 
 // New 创建新的反编译报告
 func New(inputPath, outputPath string) *Report {
 	return &Report{
-		InputPath:  inputPath,
-		OutputPath: outputPath,
-		StartTime:  time.Now(),
-		Status:     "completed",
-		Results:    make([]Result, 0),
+		InputPath:      inputPath,
+		OutputPath:     outputPath,
+		StartTime:      time.Now(),
+		Status:         "completed",
+		StageFailures:  make(map[string]int),
+		StageDurations: make(map[string]float64),
+		Results:        make([]Result, 0),
 	}
 }
 
@@ -103,9 +110,27 @@ func (r *Report) MarkCancelled() {
 	r.Status = "cancelled"
 }
 
+func (r *Report) rebuildStageFailures() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.StageFailures = make(map[string]int)
+	for _, it := range r.Results {
+		if it.Success {
+			continue
+		}
+		stage := it.Stage
+		if stage == "" {
+			stage = "unknown"
+		}
+		r.StageFailures[stage]++
+	}
+}
+
 // Generate 生成最终报告
 func (r *Report) Generate() error {
 	r.EndTime = time.Now()
+	r.rebuildStageFailures()
 	duration := r.EndTime.Sub(r.StartTime)
 	successCount := atomic.LoadInt32(&r.SuccessCount)
 	failureCount := atomic.LoadInt32(&r.FailureCount)
@@ -153,6 +178,14 @@ func (r *Report) Generate() error {
 		nestedFound,
 		nestedHandled,
 		nestedSkipped)
+
+	if len(r.StageFailures) > 0 {
+		fmt.Println("失败分布(按阶段):")
+		for stage, cnt := range r.StageFailures {
+			fmt.Printf("   - %s: %d\n", stage, cnt)
+		}
+		fmt.Println()
+	}
 
 	// 生成详细报告文件
 	if err := r.saveDetailedReports(); err != nil {
@@ -277,6 +310,8 @@ func (r *Report) saveHTMLReport(path string) error {
                         <tr>
                             <th>文件名</th>
                             <th>包名</th>
+                            <th>阶段</th>
+                            <th>错误码</th>
                             <th>状态</th>
                             <th>耗时(秒)</th>
                             <th>错误信息</th>
@@ -296,6 +331,14 @@ func (r *Report) saveHTMLReport(path string) error {
 		status := "success"
 		statusText := "成功"
 		errorMsg := "-"
+		stage := result.Stage
+		if stage == "" {
+			stage = "-"
+		}
+		errorCode := result.ErrorCode
+		if errorCode == "" {
+			errorCode = "-"
+		}
 		if !result.Success {
 			status = "failure"
 			statusText = "失败"
@@ -306,12 +349,16 @@ func (r *Report) saveHTMLReport(path string) error {
                         <tr>
                             <td>%s</td>
                             <td>%s</td>
+                            <td>%s</td>
+                            <td>%s</td>
                             <td><span class="status %s">%s</span></td>
                             <td>%.3f</td>
                             <td><div class="error-msg">%s</div></td>
                         </tr>`,
 			html.EscapeString(result.ClassName),
 			html.EscapeString(result.PackageName),
+			html.EscapeString(stage),
+			html.EscapeString(errorCode),
 			status,
 			statusText,
 			result.TimeTaken,
