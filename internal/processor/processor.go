@@ -46,6 +46,7 @@ type FilterConfig struct {
 	JarIncludes       []string // JAR 名称必须包含的关键字
 	NestedJarStrategy string   // 嵌套JAR策略: skip/filtered/full
 	MaxJarDepth       int      // 嵌套JAR最大递归深度
+	LogFormat         string   // 日志格式: text/json
 	CopyResources     bool     // 是否复制配置文件到输出目录
 	CopyLibJars       bool     // 是否复制依赖 JAR 到 libs 目录
 	GenerateIDEA      bool     // 是否生成 IDEA 项目配置
@@ -59,6 +60,7 @@ func NewDefaultFilterConfig() *FilterConfig {
 		SkipLibs:          true,
 		NestedJarStrategy: "filtered",
 		MaxJarDepth:       8,
+		LogFormat:         "text",
 	}
 }
 
@@ -161,6 +163,8 @@ func (p *ClassProcessor) Process(ctx context.Context, inputPath string, outputDi
 	result := report.Result{
 		ClassName:   filepath.Base(inputPath),
 		PackageName: ExtractPackageName(inputPath),
+		FilePath:    inputPath,
+		Stage:       "decompile",
 		Success:     false,
 		TimeStamp:   startTime,
 	}
@@ -168,6 +172,7 @@ func (p *ClassProcessor) Process(ctx context.Context, inputPath string, outputDi
 	err := p.cfrManager.Decompile(ctx, inputPath, outputDir)
 	if err != nil {
 		result.Success = false
+		result.ErrorCode = "DECOMPILE_FAILED"
 		result.Error = fmt.Sprintf("反编译失败: %v", err)
 		color.Red("✗ %s", result.ClassName)
 	} else {

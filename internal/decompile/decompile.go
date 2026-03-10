@@ -2,10 +2,12 @@ package decompile
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/fatih/color"
 	"github.com/jiaozhu/emorad/internal/cfr"
@@ -13,9 +15,31 @@ import (
 	"github.com/jiaozhu/emorad/internal/report"
 )
 
+func logEvent(format string, level string, event string, kv map[string]any) {
+	if format == "json" {
+		payload := map[string]any{
+			"ts":    time.Now().Format(time.RFC3339),
+			"level": level,
+			"event": event,
+		}
+		for k, v := range kv {
+			payload[k] = v
+		}
+		b, _ := json.Marshal(payload)
+		fmt.Println(string(b))
+		return
+	}
+	if len(kv) == 0 {
+		fmt.Printf("[%s] %s\n", strings.ToUpper(level), event)
+		return
+	}
+	fmt.Printf("[%s] %s: %v\n", strings.ToUpper(level), event, kv)
+}
+
 // Run 执行反编译操作
 func Run(ctx context.Context, inputPath, outputDir string, workers int, filterConfig *processor.FilterConfig) error {
 
+	logEvent(filterConfig.LogFormat, "info", "start_decompile", map[string]any{"input": inputPath, "workers": workers})
 	color.Cyan("\n[START] 开始反编译...")
 	color.Cyan("============================================")
 
@@ -45,6 +69,7 @@ func Run(ctx context.Context, inputPath, outputDir string, workers int, filterCo
 
 	// 初始化CFR管理器
 	color.Cyan("[INIT] 初始化反编译器...")
+	initStart := time.Now()
 	cfrManager, err := cfr.NewManager()
 	if err != nil {
 		color.Red("[ERROR] 初始化CFR失败: %v", err)
@@ -74,6 +99,7 @@ func Run(ctx context.Context, inputPath, outputDir string, workers int, filterCo
 
 	// 创建报告
 	rpt := report.New(inputPath, srcDir)
+	rpt.AddStageDuration("init", time.Since(initStart).Seconds())
 
 	// 根据文件类型选择处理器
 	var proc processor.Processor
@@ -104,31 +130,49 @@ func Run(ctx context.Context, inputPath, outputDir string, workers int, filterCo
 	color.Cyan("============================================\n")
 
 	// 执行处理
+	processStart := time.Now()
 	if err := proc.Process(ctx, inputPath, srcDir, rpt); err != nil {
 		if err == context.Canceled || err == context.DeadlineExceeded {
 			color.Yellow("\n[CANCEL] 任务已中断: %v", err)
 			rpt.MarkCancelled()
+			rpt.AddStageDuration("process", time.Since(processStart).Seconds())
+			logEvent(filterConfig.LogFormat, "warn", "decompile_cancelled", map[string]any{"error": err.Error()})
 			_ = rpt.Generate()
 			return err
 		}
 		color.Red("\n[ERROR] 处理失败: %v", err)
+		rpt.AddResult(report.Result{
+			ClassName: filepath.Base(inputPath),
+			FilePath:  inputPath,
+			Stage:     "process",
+			ErrorCode: "PROCESS_FAILED",
+			Success:   false,
+			Error:     err.Error(),
+			TimeStamp: time.Now(),
+		})
+		rpt.AddStageDuration("process", time.Since(processStart).Seconds())
+		logEvent(filterConfig.LogFormat, "error", "decompile_failed", map[string]any{"error": err.Error()})
 		// 即使有错误也生成报告
 		rpt.Generate()
 		return err
 	}
+	rpt.AddStageDuration("process", time.Since(processStart).Seconds())
 
 	// Unicode 后处理：将 \uXXXX 转换为实际的中文字符
 	color.Cyan("\n[PROCESS] 处理 Unicode 转义序列...")
+	unicodeStart := time.Now()
 	processed, modified, err := processor.ProcessDirectoryUnicode(srcDir)
 	if err != nil {
 		color.Yellow("[WARN] Unicode 后处理警告: %v", err)
 	} else if modified > 0 {
 		color.Green("[OK] Unicode 后处理完成: 处理 %d 文件, 修复 %d 文件", processed, modified)
 	}
+	rpt.AddStageDuration("unicode_postprocess", time.Since(unicodeStart).Seconds())
 
 	// 生成 IDEA 项目配置
 	if filterConfig.GenerateIDEA {
 		color.Cyan("\n[PROCESS] 生成 IDEA 项目配置...")
+		ideaStart := time.Now()
 		projectName := filepath.Base(outputDir)
 		if projectName == "." || projectName == "" {
 			projectName = "decompiled"
@@ -146,8 +190,10 @@ func Run(ctx context.Context, inputPath, outputDir string, workers int, filterCo
 		} else {
 			color.Green("[OK] IDEA 项目配置已生成，可直接用 IDEA 打开: %s", outputDir)
 		}
+		rpt.AddStageDuration("idea_project", time.Since(ideaStart).Seconds())
 	}
 
+	logEvent(filterConfig.LogFormat, "info", "decompile_finished", map[string]any{"status": rpt.Status})
 	// 生成报告
 	return rpt.Generate()
 }
