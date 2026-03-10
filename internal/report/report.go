@@ -32,6 +32,7 @@ type Report struct {
 	OutputPath    string     `json:"outputPath"`
 	StartTime     time.Time  `json:"startTime"`
 	EndTime       time.Time  `json:"endTime"`
+	Status        string     `json:"status"`
 	TotalFiles    int32      `json:"totalFiles"`    // 已处理的文件数
 	ExpectedFiles int32      `json:"expectedFiles"` // 预期要处理的总文件数
 	SuccessCount  int32      `json:"successCount"`
@@ -46,6 +47,7 @@ func New(inputPath, outputPath string) *Report {
 		InputPath:  inputPath,
 		OutputPath: outputPath,
 		StartTime:  time.Now(),
+		Status:     "completed",
 		Results:    make([]Result, 0),
 	}
 }
@@ -88,6 +90,10 @@ func (r *Report) AddExpectedFiles(count int32) {
 	atomic.AddInt32(&r.ExpectedFiles, count)
 }
 
+func (r *Report) MarkCancelled() {
+	r.Status = "cancelled"
+}
+
 // Generate 生成最终报告
 func (r *Report) Generate() error {
 	r.EndTime = time.Now()
@@ -109,6 +115,7 @@ func (r *Report) Generate() error {
 输入路径: %s
 输出路径: %s
 总耗时:   %.2f 秒
+任务状态: %s
 
 文件统计:
    - 总文件数: %d
@@ -121,6 +128,7 @@ func (r *Report) Generate() error {
 		r.InputPath,
 		r.OutputPath,
 		duration.Seconds(),
+		r.Status,
 		totalFiles,
 		successCount,
 		failureCount,
@@ -299,11 +307,12 @@ func (r *Report) saveHTMLReport(path string) error {
         <div class="footer">
             <p>📂 输入: %s</p>
             <p>📁 输出: %s</p>
+            <p>🏁 状态: %s</p>
             <p>Powered by Emorad - Explore More Of Reverse And Decompile</p>
         </div>
     </div>
 </body>
-</html>`, r.InputPath, r.OutputPath)
+</html>`, r.InputPath, r.OutputPath, r.Status)
 
 	return os.WriteFile(path, []byte(htmlContent), 0644)
 }
