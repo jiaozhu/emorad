@@ -157,6 +157,8 @@ func (p *ClassProcessor) Process(ctx context.Context, inputPath string, outputDi
 	result := report.Result{
 		ClassName:   filepath.Base(inputPath),
 		PackageName: ExtractPackageName(inputPath),
+		FilePath:    inputPath,
+		Stage:       "decompile",
 		Success:     false,
 		TimeStamp:   startTime,
 	}
@@ -164,6 +166,7 @@ func (p *ClassProcessor) Process(ctx context.Context, inputPath string, outputDi
 	err := p.cfrManager.Decompile(ctx, inputPath, outputDir)
 	if err != nil {
 		result.Success = false
+		result.ErrorCode = "DECOMPILE_FAILED"
 		result.Error = fmt.Sprintf("反编译失败: %v", err)
 		color.Red("✗ %s", result.ClassName)
 	} else {
