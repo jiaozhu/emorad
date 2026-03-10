@@ -127,6 +127,12 @@ func (r *Report) rebuildStageFailures() {
 	}
 }
 
+func (r *Report) AddStageDuration(stage string, seconds float64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.StageDurations[stage] = seconds
+}
+
 // Generate 生成最终报告
 func (r *Report) Generate() error {
 	r.EndTime = time.Now()
@@ -183,6 +189,14 @@ func (r *Report) Generate() error {
 		fmt.Println("失败分布(按阶段):")
 		for stage, cnt := range r.StageFailures {
 			fmt.Printf("   - %s: %d\n", stage, cnt)
+		}
+		fmt.Println()
+	}
+
+	if len(r.StageDurations) > 0 {
+		fmt.Println("阶段耗时(秒):")
+		for stage, sec := range r.StageDurations {
+			fmt.Printf("   - %s: %.3f\n", stage, sec)
 		}
 		fmt.Println()
 	}

@@ -113,11 +113,13 @@ Without arguments, decompiles the current directory.`,
 			noDefaultExclude, _ := cmd.Flags().GetBool("no-default-exclude")
 			nestedJarStrategy, _ := cmd.Flags().GetString("nested-jar-strategy")
 			maxJarDepth, _ := cmd.Flags().GetInt("max-jar-depth")
+			logFormat, _ := cmd.Flags().GetString("log-format")
 
 			filterConfig := processor.NewDefaultFilterConfig()
 			filterConfig.SkipLibs = skipLibs
 			filterConfig.NestedJarStrategy = nestedJarStrategy
 			filterConfig.MaxJarDepth = maxJarDepth
+			filterConfig.LogFormat = strings.ToLower(logFormat)
 			filterConfig.CopyResources, _ = cmd.Flags().GetBool("copy-resources")
 			filterConfig.CopyLibJars, _ = cmd.Flags().GetBool("copy-libs")
 			filterConfig.GenerateIDEA, _ = cmd.Flags().GetBool("idea-project")
@@ -154,6 +156,10 @@ Without arguments, decompiles the current directory.`,
 				color.Red("Error: --max-jar-depth must be >= 0")
 				return
 			}
+			if filterConfig.LogFormat != "text" && filterConfig.LogFormat != "json" {
+				color.Red("Error: --log-format must be text or json")
+				return
+			}
 
 			if err := decompile.Run(ctx, absInputPath, outputDir, workers, filterConfig); err != nil {
 				color.Red("Decompile failed: %v", err)
@@ -171,6 +177,7 @@ Without arguments, decompiles the current directory.`,
 	rootCmd.Flags().StringP("jar-include", "j", "", "Only process lib JARs containing specified keywords")
 	rootCmd.Flags().String("nested-jar-strategy", "filtered", "Nested JAR strategy: skip | filtered | full")
 	rootCmd.Flags().Int("max-jar-depth", 8, "Maximum nested JAR recursion depth")
+	rootCmd.Flags().String("log-format", "text", "Log format: text or json")
 	rootCmd.Flags().BoolP("copy-resources", "r", false, "Copy resource files to output/resources")
 	rootCmd.Flags().Bool("copy-libs", false, "Copy dependency JARs to output/libs")
 	rootCmd.Flags().Bool("idea-project", false, "Generate IDEA project structure with .iml file")
