@@ -15,6 +15,7 @@ import (
 )
 
 const consoleWidth = 80
+const progressBarWidth = 40
 
 // Result 表示单个文件的反编译结果
 type Result struct {
@@ -46,6 +47,7 @@ type Report struct {
 	StageFailures  map[string]int     `json:"stageFailures,omitempty"`
 	StageDurations map[string]float64 `json:"stageDurations,omitempty"`
 	Results        []Result           `json:"results"`
+	Quiet          bool               `json:"-"`
 	mu             sync.Mutex         // 保护Results切片
 }
 
@@ -79,9 +81,17 @@ func (r *Report) AddResult(result Result) {
 	expected := atomic.LoadInt32(&r.ExpectedFiles)
 
 	// 计算并显示进度
-	if expected > 0 {
+	if !r.Quiet && expected > 0 {
 		progress := float64(completed) / float64(expected) * 100
-		fmt.Printf("\r反编译进度: %.1f%% (%d/%d)", progress, completed, expected)
+		filled := int((float64(completed) / float64(expected)) * progressBarWidth)
+		if filled > progressBarWidth {
+			filled = progressBarWidth
+		}
+		if filled < 0 {
+			filled = 0
+		}
+		bar := strings.Repeat("=", filled) + strings.Repeat("-", progressBarWidth-filled)
+		fmt.Printf("\r反编译进度 [%s] %6.2f%% (%d/%d)", bar, progress, completed, expected)
 	}
 }
 
@@ -145,12 +155,15 @@ func (r *Report) Generate() error {
 	nestedHandled := atomic.LoadInt32(&r.NestedHandled)
 	nestedSkipped := atomic.LoadInt32(&r.NestedSkipped)
 
-	// 清除进度显示的行
-	fmt.Print("\r" + strings.Repeat(" ", consoleWidth) + "\r")
+	if !r.Quiet {
+		// 清除进度显示的行
+		fmt.Print("\r" + strings.Repeat(" ", consoleWidth) + "\r")
+	}
 
-	// 打印摘要报告
-	color.Green("\n[OK] 反编译完成！")
-	fmt.Printf(`
+	if !r.Quiet {
+		// 打印摘要报告
+		color.Green("\n[OK] 反编译完成！")
+		fmt.Printf(`
 ============================================
               反编译报告摘要
 ============================================
@@ -173,39 +186,44 @@ func (r *Report) Generate() error {
 
 ============================================
 `,
-		r.InputPath,
-		r.OutputPath,
-		duration.Seconds(),
-		r.Status,
-		totalFiles,
-		successCount,
-		failureCount,
-		getSuccessRate(successCount, totalFiles),
-		nestedFound,
-		nestedHandled,
-		nestedSkipped)
+			r.InputPath,
+			r.OutputPath,
+			duration.Seconds(),
+			r.Status,
+			totalFiles,
+			successCount,
+			failureCount,
+			getSuccessRate(successCount, totalFiles),
+			nestedFound,
+			nestedHandled,
+			nestedSkipped)
 
-	if len(r.StageFailures) > 0 {
-		fmt.Println("失败分布(按阶段):")
-		for stage, cnt := range r.StageFailures {
-			fmt.Printf("   - %s: %d\n", stage, cnt)
+		if len(r.StageFailures) > 0 {
+			fmt.Println("失败分布(按阶段):")
+			for stage, cnt := range r.StageFailures {
+				fmt.Printf("   - %s: %d\n", stage, cnt)
+			}
+			fmt.Println()
 		}
-		fmt.Println()
-	}
 
-	if len(r.StageDurations) > 0 {
-		fmt.Println("阶段耗时(秒):")
-		for stage, sec := range r.StageDurations {
-			fmt.Printf("   - %s: %.3f\n", stage, sec)
+		if len(r.StageDurations) > 0 {
+			fmt.Println("阶段耗时(秒):")
+			for stage, sec := range r.StageDurations {
+				fmt.Printf("   - %s: %.3f\n", stage, sec)
+			}
+			fmt.Println()
 		}
-		fmt.Println()
 	}
 
 	// 生成详细报告文件
 	if err := r.saveDetailedReports(); err != nil {
-		color.Yellow("[WARN] 保存详细报告失败: %v", err)
+		if !r.Quiet {
+			color.Yellow("[WARN] 保存详细报告失败: %v", err)
+		}
 	} else {
-		color.Cyan("[INFO] 详细报告已保存到: %s/reports/", r.OutputPath)
+		if !r.Quiet {
+			color.Cyan("[INFO] 详细报告已保存到: %s/reports/", r.OutputPath)
+		}
 	}
 
 	return nil

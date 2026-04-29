@@ -23,7 +23,7 @@ PLATFORMS := darwin-amd64 darwin-arm64 linux-amd64 linux-arm64 windows-amd64
 # 帮助信息
 .PHONY: help
 help:
-	@echo "🎯 Emorad 构建工具"
+	@echo "Emorad Build Tool"
 	@echo ""
 	@echo "使用方法:"
 	@echo "  make build          编译当前平台"
@@ -46,105 +46,105 @@ help:
 # 编译当前平台
 .PHONY: build
 build:
-	@echo "📦 编译当前平台..."
+	@echo "[INFO] Building current platform..."
 	@mkdir -p $(BUILD_DIR)
 	$(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(APP_NAME) ./cmd/emorad
-	@echo "✅ 编译完成: $(BUILD_DIR)/$(APP_NAME)"
+	@echo "[DONE] Built: $(BUILD_DIR)/$(APP_NAME)"
 
 # 安装到系统
 .PHONY: install
 install: build
-	@echo "📦 安装到 /usr/local/bin..."
+	@echo "[INFO] Installing to /usr/local/bin..."
 	@sudo cp $(BUILD_DIR)/$(APP_NAME) /usr/local/bin/$(APP_NAME)
-	@echo "✅ 安装完成"
+	@echo "[DONE] Install complete"
 
 # 清理
 .PHONY: clean
 clean:
-	@echo "🧹 清理构建产物..."
+	@echo "[INFO] Cleaning build artifacts..."
 	@rm -rf $(BUILD_DIR)
 	@rm -f $(APP_NAME) $(APP_NAME).exe
-	@echo "✅ 清理完成"
+	@echo "[DONE] Clean complete"
 
 # 运行测试
 .PHONY: test
 test:
-	@echo "🧪 运行测试..."
+	@echo "[INFO] Running tests..."
 	$(GO) test -v ./...
 
 # 代码检查
 .PHONY: vet
 vet:
-	@echo "🔍 运行代码检查..."
+	@echo "[INFO] Running go vet..."
 	$(GO) vet ./...
 
 # 格式化代码
 .PHONY: fmt
 fmt:
-	@echo "✨ 格式化代码..."
+	@echo "[INFO] Formatting source..."
 	$(GO) fmt ./...
 
 # 编译所有平台
 .PHONY: all
 all: clean $(PLATFORMS)
 	@echo ""
-	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@echo "✅ 所有平台编译完成!"
+	@echo "------------------------------------------"
+	@echo "[DONE] All platform builds completed"
 	@echo ""
-	@echo "📁 构建文件位置: $(BUILD_DIR)/"
+	@echo "[INFO] Build artifacts: $(BUILD_DIR)/"
 	@ls -lh $(BUILD_DIR)/
 	@echo ""
 
 # macOS Intel
 .PHONY: darwin-amd64
 darwin-amd64:
-	@echo "📦 编译 macOS Intel (amd64)..."
+	@echo "[INFO] Building macOS Intel (amd64)..."
 	@mkdir -p $(BUILD_DIR)
 	GOOS=darwin GOARCH=amd64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(APP_NAME)-darwin-amd64 ./cmd/emorad
-	@echo "✅ macOS Intel 编译完成"
+	@echo "[DONE] Built macOS Intel (amd64)"
 
 # macOS Apple Silicon
 .PHONY: darwin-arm64
 darwin-arm64:
-	@echo "📦 编译 macOS Apple Silicon (arm64)..."
+	@echo "[INFO] Building macOS Apple Silicon (arm64)..."
 	@mkdir -p $(BUILD_DIR)
 	GOOS=darwin GOARCH=arm64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(APP_NAME)-darwin-arm64 ./cmd/emorad
-	@echo "✅ macOS Apple Silicon 编译完成"
+	@echo "[DONE] Built macOS Apple Silicon (arm64)"
 
 # Linux x86_64
 .PHONY: linux-amd64
 linux-amd64:
-	@echo "📦 编译 Linux x86_64 (amd64)..."
+	@echo "[INFO] Building Linux x86_64 (amd64)..."
 	@mkdir -p $(BUILD_DIR)
 	GOOS=linux GOARCH=amd64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(APP_NAME)-linux-amd64 ./cmd/emorad
-	@echo "✅ Linux x86_64 编译完成"
+	@echo "[DONE] Built Linux x86_64 (amd64)"
 
 # Linux ARM64
 .PHONY: linux-arm64
 linux-arm64:
-	@echo "📦 编译 Linux ARM64 (arm64)..."
+	@echo "[INFO] Building Linux ARM64 (arm64)..."
 	@mkdir -p $(BUILD_DIR)
 	GOOS=linux GOARCH=arm64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(APP_NAME)-linux-arm64 ./cmd/emorad
-	@echo "✅ Linux ARM64 编译完成"
+	@echo "[DONE] Built Linux ARM64 (arm64)"
 
 # Windows x86_64
 .PHONY: windows-amd64
 windows-amd64:
-	@echo "📦 编译 Windows x86_64 (amd64)..."
+	@echo "[INFO] Building Windows x86_64 (amd64)..."
 	@mkdir -p $(BUILD_DIR)
 	GOOS=windows GOARCH=amd64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(APP_NAME)-windows-amd64.exe ./cmd/emorad
-	@echo "✅ Windows x86_64 编译完成"
+	@echo "[DONE] Built Windows x86_64 (amd64)"
 
 # 打包发布
 .PHONY: release
 release: all
-	@echo "📦 打包发布文件..."
+	@echo "[INFO] Packaging release artifacts..."
 	@cd $(BUILD_DIR) && for f in $(APP_NAME)-*; do \
 		if [ -f "$$f" ]; then \
 			tar -czvf "$$f.tar.gz" "$$f" 2>/dev/null || zip "$$f.zip" "$$f"; \
 		fi \
 	done
-	@echo "✅ 打包完成"
+	@echo "[DONE] Release packaging complete"
 
 # 显示版本
 .PHONY: version

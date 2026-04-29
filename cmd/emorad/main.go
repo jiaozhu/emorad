@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"syscall"
 
@@ -22,20 +23,6 @@ var (
 )
 
 var rootCmd *cobra.Command
-
-func isTomcatDeployDir(path string) bool {
-	classesPath := filepath.Join(path, "WEB-INF", "classes")
-	if stat, err := os.Stat(classesPath); err == nil && stat.IsDir() {
-		return true
-	}
-
-	libPath := filepath.Join(path, "WEB-INF", "lib")
-	if stat, err := os.Stat(libPath); err == nil && stat.IsDir() {
-		return true
-	}
-
-	return false
-}
 
 func parsePackagePrefixes(input string) []string {
 	if input == "" {
@@ -56,6 +43,47 @@ func parsePackagePrefixes(input string) []string {
 	return result
 }
 
+func resolveDefaultOutput(absInputPath string, ideaProject bool) string {
+	if stat, err := os.Stat(absInputPath); err == nil && !stat.IsDir() {
+		baseDir := filepath.Dir(absInputPath)
+		if ideaProject {
+			return filepath.Join(baseDir, "decompiled")
+		}
+		return filepath.Join(baseDir, "src")
+	}
+	if ideaProject {
+		return filepath.Join(absInputPath, "decompiled")
+	}
+	return filepath.Join(absInputPath, "src")
+}
+
+func deriveAppJarHints(absInputPath string) []string {
+	candidates := []string{filepath.Base(absInputPath)}
+	if stat, err := os.Stat(absInputPath); err == nil && !stat.IsDir() {
+		candidates = append(candidates, filepath.Base(filepath.Dir(absInputPath)))
+	}
+
+	partsSet := make(map[string]struct{})
+	for _, c := range candidates {
+		c = strings.ToLower(strings.TrimSpace(c))
+		c = strings.TrimSuffix(c, filepath.Ext(c))
+		for _, part := range strings.FieldsFunc(c, func(r rune) bool {
+			return r == '-' || r == '_' || r == '.' || r == ' '
+		}) {
+			if len(part) >= 3 {
+				partsSet[part] = struct{}{}
+			}
+		}
+	}
+
+	out := make([]string, 0, len(partsSet))
+	for k := range partsSet {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func init() {
 	rootCmd = &cobra.Command{
 		Use:   "emorad [file or directory]",
@@ -63,7 +91,7 @@ func init() {
 		Long: `Decompile JAR, WAR, CLASS files and Tomcat deployments.
 
 Automatically filters framework code and generates HTML/JSON reports.
-Without arguments, decompiles the current directory.`,
+Without arguments, automatically scans and decompiles supported artifacts in the current directory.`,
 		Version: Version,
 		Run: func(cmd *cobra.Command, args []string) {
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -78,13 +106,6 @@ Without arguments, decompiles the current directory.`,
 					color.Red("Error: cannot get current directory: %v", err)
 					return
 				}
-
-				if !isTomcatDeployDir(inputPath) {
-					color.Red("Error: current directory is not a valid Tomcat deployment")
-					color.Yellow("Hint: directory should contain WEB-INF/classes or WEB-INF/lib")
-					color.Yellow("Hint: or specify a JAR/WAR file or directory as argument")
-					return
-				}
 			} else {
 				inputPath = args[0]
 			}
@@ -96,18 +117,16 @@ Without arguments, decompiles the current directory.`,
 			}
 
 			outputDir, _ := cmd.Flags().GetString("output")
-			if outputDir == "" {
-				if stat, err := os.Stat(absInputPath); err == nil && !stat.IsDir() {
-					outputDir = filepath.Join(filepath.Dir(absInputPath), "src")
-				} else {
-					outputDir = filepath.Join(absInputPath, "src")
-				}
-			}
 
 			workers, _ := cmd.Flags().GetInt("workers")
+			if workers <= 0 {
+				color.Red("Error: --workers must be > 0")
+				return
+			}
 
 			includeStr, _ := cmd.Flags().GetString("include")
 			excludeStr, _ := cmd.Flags().GetString("exclude")
+			excludeMode, _ := cmd.Flags().GetString("exclude-mode")
 			jarIncludeStr, _ := cmd.Flags().GetString("jar-include")
 			jarMatchMode, _ := cmd.Flags().GetString("jar-match-mode")
 			skipLibs, _ := cmd.Flags().GetBool("skip-libs")
@@ -115,6 +134,9 @@ Without arguments, decompiles the current directory.`,
 			nestedJarStrategy, _ := cmd.Flags().GetString("nested-jar-strategy")
 			maxJarDepth, _ := cmd.Flags().GetInt("max-jar-depth")
 			logFormat, _ := cmd.Flags().GetString("log-format")
+			unicodePostprocess, _ := cmd.Flags().GetBool("unicode-postprocess")
+			failFast, _ := cmd.Flags().GetBool("fail-fast")
+			configPath, _ := cmd.Flags().GetString("config")
 
 			filterConfig := processor.NewDefaultFilterConfig()
 			filterConfig.SkipLibs = skipLibs
@@ -125,17 +147,54 @@ Without arguments, decompiles the current directory.`,
 			filterConfig.CopyResources, _ = cmd.Flags().GetBool("copy-resources")
 			filterConfig.CopyLibJars, _ = cmd.Flags().GetBool("copy-libs")
 			filterConfig.GenerateIDEA, _ = cmd.Flags().GetBool("idea-project")
+			filterConfig.UnicodePostprocess = unicodePostprocess
+			filterConfig.FailFast = failFast
+			filterConfig.AppJarHints = deriveAppJarHints(absInputPath)
+
+			cfg, loadedPath, err := loadConfig(configPath)
+			if err != nil {
+				color.Red("Error: load config failed: %v", err)
+				return
+			}
+			if cfg != nil {
+				if filterConfig.LogFormat == "text" {
+					color.Cyan("[CONFIG] 已加载配置文件: %s", loadedPath)
+				}
+				if len(cfg.Filter.CommonJarPrefixes) > 0 {
+					filterConfig.CommonJarPrefixes = append([]string{}, cfg.Filter.CommonJarPrefixes...)
+				}
+				if len(cfg.Filter.AppJarHints) > 0 {
+					filterConfig.AppJarHints = append(filterConfig.AppJarHints, cfg.Filter.AppJarHints...)
+				}
+				if len(cfg.Filter.JarInclude) > 0 {
+					filterConfig.JarIncludes = append(filterConfig.JarIncludes, cfg.Filter.JarInclude...)
+				}
+			}
+			if outputDir == "" {
+				outputDir = resolveDefaultOutput(absInputPath, filterConfig.GenerateIDEA)
+			}
 
 			if includes := parsePackagePrefixes(includeStr); len(includes) > 0 {
 				filterConfig.Includes = includes
 			}
 
-			if excludes := parsePackagePrefixes(excludeStr); len(excludes) > 0 {
-				filterConfig.Excludes = append(filterConfig.Excludes, excludes...)
-			}
-
 			if noDefaultExclude {
-				filterConfig.Excludes = parsePackagePrefixes(excludeStr)
+				excludeMode = "replace"
+			}
+			excludeMode = strings.ToLower(strings.TrimSpace(excludeMode))
+			excludes := parsePackagePrefixes(excludeStr)
+			switch excludeMode {
+			case "append":
+				if len(excludes) > 0 {
+					filterConfig.Excludes = append(filterConfig.Excludes, excludes...)
+				}
+			case "replace":
+				filterConfig.Excludes = excludes
+			case "none":
+				filterConfig.Excludes = nil
+			default:
+				color.Red("Error: --exclude-mode must be append, replace or none")
+				return
 			}
 
 			if jarIncludeStr != "" {
@@ -174,17 +233,22 @@ Without arguments, decompiles the current directory.`,
 		},
 	}
 
-	rootCmd.Flags().StringP("output", "o", "", "Output directory (default: ./src)")
+	rootCmd.Flags().StringP("output", "o", "", "Output directory (default auto: src; decompiled when --idea-project)")
 	rootCmd.Flags().IntP("workers", "w", runtime.NumCPU(), "Number of concurrent workers")
 	rootCmd.Flags().StringP("include", "i", "", "Only process matching package prefixes, comma-separated")
 	rootCmd.Flags().StringP("exclude", "e", "", "Exclude matching package prefixes, comma-separated")
+	rootCmd.Flags().String("exclude-mode", "append", "Exclude strategy: append | replace | none")
 	rootCmd.Flags().Bool("skip-libs", true, "Skip JAR files in lib directory")
 	rootCmd.Flags().Bool("no-default-exclude", false, "Disable default framework exclusion list")
+	_ = rootCmd.Flags().MarkDeprecated("no-default-exclude", "use --exclude-mode=replace")
 	rootCmd.Flags().StringP("jar-include", "j", "", "Only process lib JARs matching specified keywords")
 	rootCmd.Flags().String("jar-match-mode", "contains", "JAR match mode: contains or prefix")
 	rootCmd.Flags().String("nested-jar-strategy", "filtered", "Nested JAR strategy: skip | filtered | full")
 	rootCmd.Flags().Int("max-jar-depth", 8, "Maximum nested JAR recursion depth")
 	rootCmd.Flags().String("log-format", "text", "Log format: text or json")
+	rootCmd.Flags().String("config", "", "Config file path (default: ./.emorad.yaml or ~/.emorad/config.yaml)")
+	rootCmd.Flags().Bool("unicode-postprocess", true, "Decode Unicode escape sequences in generated .java files")
+	rootCmd.Flags().Bool("fail-fast", false, "Stop processing immediately on first error")
 	rootCmd.Flags().BoolP("copy-resources", "r", false, "Copy resource files to output/resources")
 	rootCmd.Flags().Bool("copy-libs", false, "Copy dependency JARs to output/libs")
 	rootCmd.Flags().Bool("idea-project", false, "Generate IDEA project structure with .iml file")

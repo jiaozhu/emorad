@@ -1,12 +1,12 @@
 # Emorad
 
-一个 Java 反编译工具，支持 Spring Boot JAR、WAR 文件和 Tomcat 部署目录。
+一个 Java 反编译工具，支持 Spring Boot JAR、WAR 文件和 Tomcat/WebLogic 部署目录。
 
 > **E**xplore **M**ore **O**f **R**everse **A**nd **D**ecompile
 
 ## 功能特点
 
-- 支持 JAR、WAR、CLASS 文件及 Tomcat 部署目录
+- 支持 JAR、WAR、CLASS 文件及 Tomcat/WebLogic 部署目录
 - 自动识别 Spring Boot 嵌套 JAR 结构
 - 自动过滤框架代码，只反编译业务代码
 - 支持包名过滤、JAR 名称过滤
@@ -57,23 +57,40 @@ emorad /path/to/tomcat/webapps/myapp
 
 # 反编译单个CLASS文件
 emorad MyClass.class
+
+# 零参数自动模式（在当前目录自动扫描 JAR/WAR/CLASS/Tomcat 结构）
+emorad
 ```
+
+零参数模式下会自动识别：
+- Spring Boot JAR/WAR
+- Tomcat 解压目录（`WEB-INF/classes`、`WEB-INF/lib`）
+- WebLogic 常见目录（如 `APP-INF/lib`）
+
+默认会优先反编译业务代码，并尽量过滤公共依赖。
 
 ## 命令行参数
 
 | 参数 | 简写 | 说明 | 默认值 |
 |------|------|------|--------|
-| `--output` | `-o` | 输出目录 | 当前目录下的 `src` 目录 |
+| `--output` | `-o` | 输出目录（自动：普通模式为 `src`，`--idea-project` 时为 `decompiled`） | 自动推导 |
 | `--workers` | `-w` | 并发工作器数量 | CPU核心数 |
 | `--include` | `-i` | 只处理匹配的包前缀，逗号分隔 | 无（处理所有） |
 | `--exclude` | `-e` | 排除匹配的包前缀，追加到默认列表 | 无 |
+| `--exclude-mode` | - | 排除策略：`append`（默认）/`replace`/`none` | `append` |
 | `--jar-include` | `-j` | 只处理名称匹配指定关键字的 lib JAR | 无 |
 | `--jar-match-mode` | - | JAR 名称匹配模式：`contains`/`prefix` | `contains` |
+| `--nested-jar-strategy` | - | 嵌套 JAR 策略：`skip`/`filtered`/`full` | `filtered` |
+| `--max-jar-depth` | - | 嵌套 JAR 最大递归深度 | `8` |
+| `--log-format` | - | 日志格式：`text`/`json` | `text` |
+| `--config` | - | 配置文件路径（默认自动读取 `./.emorad.yaml` 或 `~/.emorad/config.yaml`） | 自动探测 |
+| `--unicode-postprocess` | - | 是否将 `.java` 中 `\\uXXXX` 解码为实际字符 | `true` |
+| `--fail-fast` | - | 遇到首个错误立即终止 | `false` |
 | `--copy-resources` | `-r` | 复制配置文件到 resources 目录 | `false` |
 | `--copy-libs` | - | 复制依赖 JAR 到 libs 目录 | `false` |
 | `--idea-project` | - | 生成 IDEA 项目结构（含 .iml 文件） | `false` |
-| `--skip-libs` | - | 跳过 lib 目录下的依赖 JAR | `true` |
-| `--no-default-exclude` | - | 不使用默认的框架包排除列表 | `false` |
+| `--skip-libs` | - | 跳过 `BOOT-INF/lib`、`WEB-INF/lib` 依赖 JAR；若同时设置 `-j` 则仅处理匹配项 | `true` |
+| `--no-default-exclude` | - | 已弃用，兼容参数；等价于 `--exclude-mode=replace` | `false` |
 | `--version` | `-v` | 显示版本信息 | - |
 | `--help` | `-h` | 显示帮助信息 | - |
 
@@ -115,8 +132,58 @@ emorad -e "com.thirdparty" app.jar
 # 禁用跳过依赖库，处理所有 JAR
 emorad --skip-libs=false app.jar
 
-# 不使用默认排除列表，只排除指定包
-emorad --no-default-exclude -e "org.springframework" app.jar
+# 不使用默认排除列表，只使用自定义排除项
+emorad --exclude-mode replace -e "org.springframework" app.jar
+```
+
+说明：
+- 默认 `--skip-libs=true` 采用“智能过滤”：
+- 常见公共依赖（如 `spring-*`、`commons-*`）自动跳过。
+- 命中应用名特征的 JAR（如 `sso_client*.jar`）会被保留处理。
+- 指定 `-j/--jar-include` 时，以手工关键字匹配为准（优先级最高）。
+
+### 规则配置文件（推荐）
+
+可通过配置文件长期维护“公共依赖过滤”与“业务 JAR 保留”规则。默认会按顺序自动加载：
+
+1. 当前目录：`./.emorad.yaml`
+2. 用户目录：`~/.emorad/config.yaml`
+
+也可以显式指定：
+
+```bash
+emorad --config /path/to/emorad.yaml
+```
+
+示例（适合你提到的 `sso_client` 场景）：
+
+```yaml
+filter:
+  common_jar_prefixes:
+    - spring-
+    - commons-
+    - slf4j
+    - log4j
+    - tomcat-
+  app_jar_hints:
+    - sso
+    - client
+    - sword
+  jar_include:
+    - sso_client
+```
+
+### 排除策略（exclude-mode）
+
+```bash
+# 默认：内置框架排除 + 自定义排除（append）
+emorad -e "com.thirdparty" app.jar
+
+# replace：仅使用自定义排除，不使用内置排除
+emorad --exclude-mode replace -e "org.springframework" app.jar
+
+# none：关闭所有排除（谨慎，输出会显著增大）
+emorad --exclude-mode none app.jar
 ```
 
 ### JAR 名称过滤
@@ -130,6 +197,19 @@ emorad -j "user-service" --jar-match-mode prefix app.jar
 
 # 结合包含过滤使用
 emorad -i "com.mycompany" -j "myapp" app.jar
+```
+
+### 嵌套 JAR 控制
+
+```bash
+# 跳过所有嵌套 JAR（只处理当前层）
+emorad app.jar --nested-jar-strategy skip
+
+# 处理所有嵌套 JAR（不做 JAR 名过滤）
+emorad app.jar --nested-jar-strategy full
+
+# 限制递归深度
+emorad app.jar --nested-jar-strategy filtered --max-jar-depth 3
 ```
 
 ### 复制配置文件
@@ -154,6 +234,35 @@ emorad -o /custom/output app.jar
 # 调整并发数
 emorad -w 4 app.jar
 ```
+
+### 错误处理策略
+
+```bash
+# 默认：聚合错误，尽量继续处理
+emorad app.jar --fail-fast=false
+
+# 发现首个错误立即退出（适合 CI 快速失败）
+emorad app.jar --fail-fast
+```
+
+### Unicode 后处理
+
+```bash
+# 默认开启：将反编译结果中的 \uXXXX 转为可读字符
+emorad app.jar --unicode-postprocess
+
+# 关闭后处理：保留原始 \uXXXX 字面量
+emorad app.jar --unicode-postprocess=false
+```
+
+### JSON 日志（可观测性）
+
+```bash
+# 输出结构化 JSON 日志（每行一条）
+emorad app.jar --log-format json
+```
+
+更多事件字段见 [docs/LOGGING.md](docs/LOGGING.md)。
 
 ### Tomcat部署目录
 

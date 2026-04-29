@@ -3,6 +3,7 @@ package processor
 import (
 	"archive/zip"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -51,6 +52,11 @@ type FilterConfig struct {
 	CopyResources     bool     // 是否复制配置文件到输出目录
 	CopyLibJars       bool     // 是否复制依赖 JAR 到 libs 目录
 	GenerateIDEA      bool     // 是否生成 IDEA 项目配置
+	UnicodePostprocess bool    // 是否执行 Unicode 后处理
+	FailFast          bool     // 遇到错误是否立即失败
+	EventLogger       func(level string, event string, kv map[string]any)
+	AppJarHints       []string // 业务JAR识别提示词（来自应用名/目录名）
+	CommonJarPrefixes []string // 公共依赖JAR前缀（默认过滤）
 }
 
 // NewDefaultFilterConfig 创建默认过滤配置
@@ -63,6 +69,21 @@ func NewDefaultFilterConfig() *FilterConfig {
 		NestedJarStrategy: "filtered",
 		MaxJarDepth:       8,
 		LogFormat:         "text",
+		UnicodePostprocess: true,
+		FailFast:          false,
+		CommonJarPrefixes: []string{
+			"spring-", "springframework-",
+			"commons-", "apache-",
+			"jackson-", "fastjson", "gson",
+			"log4j", "slf4j", "logback",
+			"mybatis", "hibernate",
+			"tomcat-", "servlet-", "jsp-", "jstl",
+			"javax.", "jakarta.",
+			"guava", "netty", "cglib", "asm-", "antlr-",
+			"byte-buddy", "kotlin-", "scala-",
+			"xml-", "stax-", "xerces", "xalan",
+			"validation-", "jaxb-", "jaxws-", "saaj-",
+		},
 	}
 }
 
@@ -89,6 +110,13 @@ func (f *FilterConfig) ShouldProcessClass(classPath, baseDir string) bool {
 	return true
 }
 
+func (f *FilterConfig) LogEvent(level string, event string, kv map[string]any) {
+	if f == nil || f.EventLogger == nil {
+		return
+	}
+	f.EventLogger(level, event, kv)
+}
+
 func (f *FilterConfig) jarNameMatched(jarName string) bool {
 	if len(f.JarIncludes) == 0 {
 		return true
@@ -110,16 +138,64 @@ func (f *FilterConfig) jarNameMatched(jarName string) bool {
 	return false
 }
 
+func normalizeArchivePath(path string) string {
+	return strings.ReplaceAll(filepath.ToSlash(path), "\\", "/")
+}
+
+func isLibJarPath(path string) bool {
+	p := normalizeArchivePath(path)
+	return strings.Contains(p, "BOOT-INF/lib/") ||
+		strings.Contains(p, "WEB-INF/lib/") ||
+		strings.Contains(p, "APP-INF/lib/")
+}
+
+func isClassesPath(path string) bool {
+	p := normalizeArchivePath(path)
+	return strings.Contains(p, "BOOT-INF/classes/") ||
+		strings.Contains(p, "WEB-INF/classes/") ||
+		strings.Contains(p, "APP-INF/classes/")
+}
+
+func (f *FilterConfig) isCommonJar(jarName string) bool {
+	name := strings.ToLower(jarName)
+	for _, prefix := range f.CommonJarPrefixes {
+		p := strings.ToLower(strings.TrimSpace(prefix))
+		if p != "" && strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func (f *FilterConfig) isLikelyBusinessJar(jarName string) bool {
+	name := strings.ToLower(strings.TrimSuffix(jarName, ".jar"))
+	for _, hint := range f.AppJarHints {
+		h := strings.ToLower(strings.TrimSpace(hint))
+		if len(h) < 3 {
+			continue
+		}
+		if strings.Contains(name, h) {
+			return true
+		}
+	}
+	return false
+}
+
 // ShouldProcessJar 判断是否应该处理该 JAR 文件
 func (f *FilterConfig) ShouldProcessJar(jarPath string) bool {
-	isLibJar := strings.Contains(jarPath, "BOOT-INF/lib") || strings.Contains(jarPath, "WEB-INF/lib")
+	isLibJar := isLibJarPath(jarPath)
 
 	if isLibJar {
-		if f.SkipLibs {
-			return f.jarNameMatched(filepath.Base(jarPath))
-		}
+		jarName := filepath.Base(jarPath)
 		if len(f.JarIncludes) > 0 {
-			return f.jarNameMatched(filepath.Base(jarPath))
+			return f.jarNameMatched(jarName)
+		}
+		if f.SkipLibs {
+			// 智能模式：过滤公共依赖，保留疑似业务JAR
+			if f.isCommonJar(jarName) {
+				return false
+			}
+			return f.isLikelyBusinessJar(jarName)
 		}
 	}
 	return true
@@ -157,10 +233,11 @@ type Processor interface {
 // ClassProcessor 处理单个.class文件
 type ClassProcessor struct {
 	cfrManager *cfr.Manager
+	textMode   bool
 }
 
-func NewClassProcessor(cfrManager *cfr.Manager) *ClassProcessor {
-	return &ClassProcessor{cfrManager: cfrManager}
+func NewClassProcessor(cfrManager *cfr.Manager, textMode bool) *ClassProcessor {
+	return &ClassProcessor{cfrManager: cfrManager, textMode: textMode}
 }
 
 func (p *ClassProcessor) GetType() string {
@@ -183,10 +260,8 @@ func (p *ClassProcessor) Process(ctx context.Context, inputPath string, outputDi
 		result.Success = false
 		result.ErrorCode = "DECOMPILE_FAILED"
 		result.Error = fmt.Sprintf("反编译失败: %v", err)
-		color.Red("✗ %s", result.ClassName)
 	} else {
 		result.Success = true
-		color.Green("✓ %s", result.ClassName)
 	}
 
 	result.TimeTaken = time.Since(startTime).Seconds()
@@ -199,6 +274,10 @@ type JarProcessor struct {
 	cfrManager   *cfr.Manager
 	workers      int
 	filterConfig *FilterConfig
+}
+
+func (p *JarProcessor) textMode() bool {
+	return p.filterConfig == nil || p.filterConfig.LogFormat == "text"
 }
 
 func NewJarProcessor(cfrManager *cfr.Manager, workers int, filterConfig *FilterConfig) *JarProcessor {
@@ -232,7 +311,6 @@ func (p *JarProcessor) processJar(ctx context.Context, inputPath string, outputD
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	color.Cyan("正在处理JAR文件(depth=%d): %s", depth, filepath.Base(inputPath))
 
 	tempDir := filepath.Join(os.TempDir(), fmt.Sprintf("emorad-%s-%d",
 		filepath.Base(inputPath), time.Now().Unix()))
@@ -255,13 +333,20 @@ func (p *JarProcessor) processJar(ctx context.Context, inputPath string, outputD
 		copiedCount := 0
 		for _, resFile := range resourceFiles {
 			if err := CopyResourceFile(resFile, tempDir, outputDir); err != nil {
-				color.Red("复制配置文件失败: %s - %v", filepath.Base(resFile), err)
+				if p.textMode() {
+					color.Red("复制配置文件失败: %s - %v", filepath.Base(resFile), err)
+				}
 			} else {
 				copiedCount++
 			}
 		}
 		if copiedCount > 0 {
-			color.Green("[OK] 复制了 %d 个配置文件", copiedCount)
+			if p.textMode() {
+				color.Green("[OK] 复制了 %d 个配置文件", copiedCount)
+			}
+			p.filterConfig.LogEvent("info", "resources_copied", map[string]any{
+				"count": copiedCount,
+			})
 		}
 	}
 
@@ -273,7 +358,13 @@ func (p *JarProcessor) processJar(ctx context.Context, inputPath string, outputD
 	}
 
 	if len(classFiles) != len(filteredClasses) {
-		color.Yellow("[FILTER] 过滤后: %d/%d 个 class 文件需要处理", len(filteredClasses), len(classFiles))
+		if p.textMode() {
+			color.Yellow("[FILTER] 过滤后: %d/%d 个 class 文件需要处理", len(filteredClasses), len(classFiles))
+		}
+		p.filterConfig.LogEvent("info", "class_filter_applied", map[string]any{
+			"before": len(classFiles),
+			"after":  len(filteredClasses),
+		})
 	}
 
 	rpt.AddExpectedFiles(int32(len(filteredClasses)))
@@ -282,9 +373,16 @@ func (p *JarProcessor) processJar(ctx context.Context, inputPath string, outputD
 	if p.filterConfig.CopyLibJars && len(nestedJars) > 0 {
 		copiedJars, err := CopyLibJars(nestedJars, outputDir)
 		if err != nil {
-			color.Yellow("[WARN] 复制依赖 JAR 失败: %v", err)
+			if p.textMode() {
+				color.Yellow("[WARN] 复制依赖 JAR 失败: %v", err)
+			}
 		} else if copiedJars > 0 {
-			color.Green("[OK] 复制了 %d 个依赖 JAR 到 libs 目录", copiedJars)
+			if p.textMode() {
+				color.Green("[OK] 复制了 %d 个依赖 JAR 到 libs 目录", copiedJars)
+			}
+			p.filterConfig.LogEvent("info", "lib_jars_copied", map[string]any{
+				"count": copiedJars,
+			})
 		}
 	}
 
@@ -292,45 +390,86 @@ func (p *JarProcessor) processJar(ctx context.Context, inputPath string, outputD
 
 	if depth >= p.filterConfig.MaxJarDepth {
 		if len(nestedJars) > 0 {
-			color.Yellow("[FILTER] 已达最大嵌套深度 %d，跳过 %d 个嵌套JAR", p.filterConfig.MaxJarDepth, len(nestedJars))
+			if p.textMode() {
+				color.Yellow("[FILTER] 已达最大嵌套深度 %d，跳过 %d 个嵌套JAR", p.filterConfig.MaxJarDepth, len(nestedJars))
+			}
+			p.filterConfig.LogEvent("warn", "nested_jar_depth_limit_reached", map[string]any{
+				"max_depth": p.filterConfig.MaxJarDepth,
+				"skipped":   len(nestedJars),
+			})
 			rpt.AddNestedStats(0, 0, int32(len(nestedJars)))
 		}
 		return p.processClassFiles(ctx, filteredClasses, outputDir, rpt)
 	}
 
+	var nestedErrs []error
 	for _, nestedJar := range nestedJars {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		if !p.shouldProcessNestedJar(nestedJar) {
 			rpt.AddNestedStats(0, 0, 1)
+			p.filterConfig.LogEvent("info", "nested_jar_skipped", map[string]any{
+				"jar":   filepath.Base(nestedJar),
+				"depth": depth + 1,
+			})
 			continue
 		}
 		rpt.AddNestedStats(0, 1, 0)
-		color.Yellow("处理嵌套JAR(depth=%d): %s", depth+1, filepath.Base(nestedJar))
 		nestedProcessor := NewJarProcessor(p.cfrManager, p.workers, p.filterConfig)
 		if err := nestedProcessor.processJar(ctx, nestedJar, outputDir, rpt, depth+1); err != nil {
-			color.Red("处理嵌套JAR失败: %v", err)
+			if p.textMode() {
+				color.Red("处理嵌套JAR失败: %v", err)
+			}
+			if p.filterConfig.FailFast {
+				return err
+			}
+			p.filterConfig.LogEvent("error", "nested_jar_failed", map[string]any{
+				"jar":   filepath.Base(nestedJar),
+				"depth": depth + 1,
+				"error": err.Error(),
+			})
+			nestedErrs = append(nestedErrs, fmt.Errorf("%s: %w", filepath.Base(nestedJar), err))
 		}
 	}
 
-	return p.processClassFiles(ctx, filteredClasses, outputDir, rpt)
+	classErr := p.processClassFiles(ctx, filteredClasses, outputDir, rpt)
+	if classErr != nil && p.filterConfig.FailFast {
+		return classErr
+	}
+	if classErr != nil {
+		nestedErrs = append(nestedErrs, classErr)
+	}
+	if len(nestedErrs) > 0 {
+		return errors.Join(nestedErrs...)
+	}
+	return nil
 }
 
 func (p *JarProcessor) processClassFiles(ctx context.Context, classFiles []string, outputDir string, rpt *report.Report) error {
 	jobs := make(chan string, len(classFiles))
 	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var errs []error
 
 	for i := 0; i < p.workers; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			processor := NewClassProcessor(p.cfrManager)
+			processor := NewClassProcessor(p.cfrManager, p.textMode())
 			for classPath := range jobs {
 				if ctx.Err() != nil {
 					return
 				}
-				processor.Process(ctx, classPath, outputDir, rpt)
+				if err := processor.Process(ctx, classPath, outputDir, rpt); err != nil {
+					p.filterConfig.LogEvent("error", "class_decompile_failed", map[string]any{
+						"class_file": filepath.Base(classPath),
+						"error":      err.Error(),
+					})
+					mu.Lock()
+					errs = append(errs, fmt.Errorf("%s: %w", filepath.Base(classPath), err))
+					mu.Unlock()
+				}
 			}
 		}()
 	}
@@ -346,6 +485,9 @@ func (p *JarProcessor) processClassFiles(ctx context.Context, classFiles []strin
 	wg.Wait()
 	if ctx.Err() != nil {
 		return ctx.Err()
+	}
+	if len(errs) > 0 {
+		return errors.Join(errs...)
 	}
 	return nil
 }
@@ -372,6 +514,10 @@ type DirectoryProcessor struct {
 	filterConfig *FilterConfig
 }
 
+func (p *DirectoryProcessor) textMode() bool {
+	return p.filterConfig == nil || p.filterConfig.LogFormat == "text"
+}
+
 func NewDirectoryProcessor(cfrManager *cfr.Manager, workers int, filterConfig *FilterConfig) *DirectoryProcessor {
 	return &DirectoryProcessor{
 		cfrManager:   cfrManager,
@@ -388,31 +534,67 @@ func (p *DirectoryProcessor) Process(ctx context.Context, inputPath string, outp
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	color.Cyan("正在处理目录: %s", inputPath)
+	if p.textMode() {
+		color.Cyan("正在处理目录: %s", inputPath)
+	}
 
 	classFiles, jarFiles, warFiles, err := ScanDirectoryComplete(inputPath, outputDir)
 	if err != nil {
 		return fmt.Errorf("扫描目录失败: %v", err)
 	}
 
-	color.Cyan("[SCAN] 扫描结果: %d个JAR, %d个WAR, %d个CLASS文件",
-		len(jarFiles), len(warFiles), len(classFiles))
+	filteredJars := make([]string, 0, len(jarFiles))
+	for _, jarPath := range jarFiles {
+		if p.filterConfig.ShouldProcessJar(jarPath) {
+			filteredJars = append(filteredJars, jarPath)
+		}
+	}
 
-	if len(jarFiles) == 0 && len(warFiles) == 0 && len(classFiles) == 0 {
-		color.Yellow("[WARN] 未找到任何需要反编译的文件")
+	filteredClasses := make([]string, 0, len(classFiles))
+	for _, classPath := range classFiles {
+		if p.filterConfig.ShouldProcessClass(classPath, inputPath) {
+			filteredClasses = append(filteredClasses, classPath)
+		}
+	}
+
+	p.filterConfig.LogEvent("info", "directory_scan_completed", map[string]any{
+		"jar_count":   len(filteredJars),
+		"war_count":   len(warFiles),
+		"class_count": len(filteredClasses),
+	})
+
+	if p.textMode() {
+		color.Cyan("[SCAN] 扫描结果: %d个JAR, %d个WAR, %d个CLASS文件",
+			len(filteredJars), len(warFiles), len(filteredClasses))
+	}
+
+	if len(filteredJars) == 0 && len(warFiles) == 0 && len(filteredClasses) == 0 {
+		if p.textMode() {
+			color.Yellow("[WARN] 未找到任何需要反编译的文件")
+		}
 		return nil
 	}
 
-	rpt.AddExpectedFiles(int32(len(classFiles)))
+	rpt.AddExpectedFiles(int32(len(filteredClasses)))
 
-	for _, jarPath := range jarFiles {
+	var procErrs []error
+	for _, jarPath := range filteredJars {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		color.Yellow("处理JAR文件: %s", filepath.Base(jarPath))
 		jarProcessor := NewJarProcessor(p.cfrManager, p.workers, p.filterConfig)
 		if err := jarProcessor.Process(ctx, jarPath, outputDir, rpt); err != nil {
-			color.Red("处理JAR失败: %v", err)
+			if p.textMode() {
+				color.Red("处理JAR失败: %v", err)
+			}
+			if p.filterConfig.FailFast {
+				return err
+			}
+			p.filterConfig.LogEvent("error", "jar_process_failed", map[string]any{
+				"jar":   filepath.Base(jarPath),
+				"error": err.Error(),
+			})
+			procErrs = append(procErrs, fmt.Errorf("jar %s: %w", filepath.Base(jarPath), err))
 		}
 	}
 
@@ -420,32 +602,46 @@ func (p *DirectoryProcessor) Process(ctx context.Context, inputPath string, outp
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		color.Yellow("处理WAR文件: %s", filepath.Base(warPath))
 		warProcessor := NewWarProcessor(p.cfrManager, p.workers, p.filterConfig)
 		if err := warProcessor.Process(ctx, warPath, outputDir, rpt); err != nil {
-			color.Red("处理WAR失败: %v", err)
+			if p.textMode() {
+				color.Red("处理WAR失败: %v", err)
+			}
+			if p.filterConfig.FailFast {
+				return err
+			}
+			p.filterConfig.LogEvent("error", "war_process_failed", map[string]any{
+				"war":   filepath.Base(warPath),
+				"error": err.Error(),
+			})
+			procErrs = append(procErrs, fmt.Errorf("war %s: %w", filepath.Base(warPath), err))
 		}
 	}
 
-	if len(classFiles) > 0 {
-		jobs := make(chan string, len(classFiles))
+	if len(filteredClasses) > 0 {
+		jobs := make(chan string, len(filteredClasses))
 		var wg sync.WaitGroup
+		var mu sync.Mutex
 
 		for i := 0; i < p.workers; i++ {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				proc := NewClassProcessor(p.cfrManager)
+			proc := NewClassProcessor(p.cfrManager, p.textMode())
 				for classPath := range jobs {
 					if ctx.Err() != nil {
 						return
 					}
-					proc.Process(ctx, classPath, outputDir, rpt)
+					if err := proc.Process(ctx, classPath, outputDir, rpt); err != nil {
+						mu.Lock()
+						procErrs = append(procErrs, fmt.Errorf("class %s: %w", filepath.Base(classPath), err))
+						mu.Unlock()
+					}
 				}
 			}()
 		}
 
-		for _, file := range classFiles {
+		for _, file := range filteredClasses {
 			if ctx.Err() != nil {
 				break
 			}
@@ -458,21 +654,25 @@ func (p *DirectoryProcessor) Process(ctx context.Context, inputPath string, outp
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
+	if len(procErrs) > 0 {
+		return errors.Join(procErrs...)
+	}
 
 	return nil
 }
 
 // ExtractPackageName 从文件路径中提取包名
 func ExtractPackageName(classPath string) string {
-	if strings.Contains(classPath, "BOOT-INF/classes/") {
-		parts := strings.Split(classPath, "BOOT-INF/classes/")
+	normalized := normalizeArchivePath(classPath)
+	if strings.Contains(normalized, "BOOT-INF/classes/") {
+		parts := strings.Split(normalized, "BOOT-INF/classes/")
 		if len(parts) > 1 {
 			return filepath.ToSlash(filepath.Dir(parts[1]))
 		}
 	}
 
-	if strings.Contains(classPath, "WEB-INF/classes/") {
-		parts := strings.Split(classPath, "WEB-INF/classes/")
+	if strings.Contains(normalized, "WEB-INF/classes/") {
+		parts := strings.Split(normalized, "WEB-INF/classes/")
 		if len(parts) > 1 {
 			return filepath.ToSlash(filepath.Dir(parts[1]))
 		}
@@ -540,12 +740,12 @@ func ScanDirectory(dir string) (classFiles []string, jarFiles []string, resource
 			case ".class":
 				classFiles = append(classFiles, path)
 			case ".jar":
-				if strings.Contains(path, "BOOT-INF/lib") || strings.Contains(path, "WEB-INF/lib") {
+				if isLibJarPath(path) {
 					jarFiles = append(jarFiles, path)
 				}
 			default:
 				if resourceExts[ext] {
-					if strings.Contains(path, "BOOT-INF/classes") || strings.Contains(path, "WEB-INF/classes") {
+					if isClassesPath(path) {
 						resourceFiles = append(resourceFiles, path)
 					}
 				}
@@ -562,6 +762,7 @@ func CopyResourceFile(srcPath, tempDir, outputDir string) error {
 	if err != nil {
 		return err
 	}
+	relPath = filepath.ToSlash(relPath)
 
 	if idx := strings.Index(relPath, "BOOT-INF/classes/"); idx != -1 {
 		relPath = relPath[idx+len("BOOT-INF/classes/"):]

@@ -1,0 +1,257 @@
+filter:
+  # 公共依赖前缀：命中后会在 skip-libs=true 时优先过滤
+  # 目标：尽量过滤主流框架/中间件/基础库 JAR，仅保留业务自研 JAR
+  common_jar_prefixes:
+    # Spring 生态
+    - spring-
+    - springframework-
+
+    # Struts / MVC
+    - struts-
+    - struts2-
+    - xwork-
+
+    # ORM / 持久化
+    - hibernate-
+    - mybatis-
+    - ibatis-
+    - c3p0-
+    - druid-
+    - hikaricp-
+
+    # Apache Commons / 工具库
+    - commons-
+    - guava-
+    - hutool-
+
+    # JSON / 序列化
+    - jackson-
+    - fastjson-
+    - gson-
+    - protobuf-
+    - kryo-
+
+    # 日志体系
+    - slf4j-
+    - log4j-
+    - logback-
+    - jul-to-slf4j-
+
+    # 网络与通信
+    - netty-
+    - okhttp-
+    - okio-
+    - httpclient-
+    - httpcore-
+    - retrofit-
+    - grpc-
+    - dubbo-
+
+    # 消息队列 / 缓存 / 搜索
+    - kafka-
+    - rocketmq-
+    - rabbitmq-
+    - jedis-
+    - lettuce-
+    - redisson-
+    - redis-
+    - spring-data-redis-
+    - spymemcached-
+    - memcached-
+    - xmemcached-
+    - elasticsearch-
+    - lucene-
+
+    # 微服务 / 配置中心 / 注册发现
+    - spring-cloud-
+    - spring-cloud-starter-
+    - spring-boot-starter-
+    - consul-
+    - spring-cloud-consul-
+    - nacos-
+    - spring-cloud-alibaba-
+    - eureka-
+    - spring-cloud-netflix-
+    - zookeeper-
+    - curator-
+    - feign-
+    - openfeign-
+    - ribbon-
+    - hystrix-
+    - sentinel-
+    - seata-
+
+    # 监控 / 链路追踪
+    - micrometer-
+    - prometheus-
+    - zipkin-
+    - brave-
+    - sleuth-
+    - skywalking-
+    - opentracing-
+    - opentelemetry-
+    - jaeger-
+    - pinpoint-
+
+    # 任务调度 / 工作流
+    - quartz-
+    - xxl-job-
+    - elastic-job-
+    - saturn-
+    - flowable-
+    - camunda-
+    - activiti-
+    - scheduler-
+
+    # 网关 / 限流 / API 管理
+    - gateway-
+    - spring-cloud-gateway-
+    - zuul-
+    - apisix-
+    - kong-
+    - envoy-
+
+    # 配置/规则/脚本引擎
+    - drools-
+    - easy-rules-
+    - mvel-
+    - groovy-
+    - bsh-
+    - nashorn-
+
+    # 对象存储 / 文件系统客户端
+    - minio-
+    - aws-java-sdk-
+    - aliyun-sdk-
+    - cos-
+    - obs-
+    - hadoop-
+    - hdfs-
+
+    # Office / 报表 / 文档处理
+    - poi-
+    - apache-poi-
+    - easyexcel-
+    - itext-
+    - freemarker-
+    - velocity-
+    - thymeleaf-
+    - jasperreports-
+
+    # 搜索 / NoSQL / 大数据生态
+    - mongodb-
+    - mongo-java-driver-
+    - cassandra-
+    - hbase-
+    - clickhouse-
+    - influxdb-
+
+    # Reactive / 并发 / 工具链
+    - reactor-
+    - rxjava-
+    - disruptor-
+    - mapstruct-
+    - lombok-
+    - joda-time-
+
+    # API 文档与接口工具
+    - swagger-
+    - springfox-
+    - knife4j-
+    - openapi-
+
+    # 安全 / 加密 / 证书
+    - bouncycastle-
+    - bcprov-
+    - xmlsec-
+    - jasypt-
+    - sharding-
+
+    # 连接池 / 代理 / APM Agent 常见
+    - p6spy-
+    - druid-
+    - hikari-
+    - arthas-
+    - elastic-apm-
+
+    # 数据库驱动
+    - mysql-
+    - mysql-connector-
+    - postgresql-
+    - pgjdbc-
+    - ojdbc-
+    - oraclepki-
+    - osdt_
+    - ucp-
+    - mssql-
+    - sqljdbc-
+    - sqlite-
+    - mariadb-
+    - db2-
+    - dmjdbc-
+    - kingbase-
+    - gbase-
+
+    # XML / WebService / 规范 API
+    - xml-
+    - xerces-
+    - xalan-
+    - dom4j-
+    - jaxen-
+    - stax-
+    - wsdl4j-
+    - saaj-
+    - jaxb-
+    - javax.
+    - jakarta.
+    - jstl-
+    - standard-
+
+    # Web 容器 / Servlet
+    - servlet-
+    - jsp-
+    - tomcat-
+    - jetty-
+    - undertow-
+
+    # AOP / 字节码 / 反射
+    - aspectj-
+    - cglib-
+    - asm-
+    - javassist-
+    - byte-buddy-
+
+    # 安全与认证
+    - shiro-
+    - spring-security-
+    - oauth-
+    - jwt-
+    - cas-
+
+    # 测试框架
+    - junit-
+    - mockito-
+    - hamcrest-
+    - assertj-
+
+  # 业务 JAR 关键词：命中后会在 WEB-INF/lib / APP-INF/lib 中优先保留
+  app_jar_hints:
+    - sso
+    - client
+    - sword
+    - j_sso_server
+    - biz
+    - business
+    - core
+    - service
+    - api
+
+  # 强制保留（最高优先级，等价于命令行 -j）
+  jar_include:
+    - sso_client
+    - sword-sso-client
+
+  # 可选：如果误过滤了业务包，可在这里追加更精确关键词（按需维护）
+  # jar_include:
+  #   - your-company-app
+  #   - your-team-module
