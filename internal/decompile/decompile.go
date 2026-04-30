@@ -38,37 +38,47 @@ func logEvent(format string, level string, event string, kv map[string]any) {
 
 // Run 执行反编译操作
 func Run(ctx context.Context, inputPath, outputDir string, workers int, filterConfig *processor.FilterConfig) error {
+	textMode := filterConfig.LogFormat == "text"
+	filterConfig.EventLogger = func(level string, event string, kv map[string]any) {
+		logEvent(filterConfig.LogFormat, level, event, kv)
+	}
 
 	logEvent(filterConfig.LogFormat, "info", "start_decompile", map[string]any{"input": inputPath, "workers": workers})
-	color.Cyan("\n[START] 开始反编译...")
-	color.Cyan("============================================")
+	if textMode {
+		color.Cyan("\n[START] 开始反编译...")
+		color.Cyan("============================================")
+	}
 
 	// 显示过滤配置
-	if len(filterConfig.Includes) > 0 {
+	if textMode && len(filterConfig.Includes) > 0 {
 		color.Green("[FILTER] 包含过滤: %v", filterConfig.Includes)
 	}
-	if len(filterConfig.Excludes) > 0 {
+	if textMode && len(filterConfig.Excludes) > 0 {
 		color.Yellow("[FILTER] 排除过滤: %d 个包前缀", len(filterConfig.Excludes))
 	}
-	if filterConfig.SkipLibs {
+	if textMode && filterConfig.SkipLibs {
 		color.Yellow("[CONFIG] 跳过依赖库: 已启用")
 	}
-	if len(filterConfig.JarIncludes) > 0 {
+	if textMode && len(filterConfig.JarIncludes) > 0 {
 		color.Green("[FILTER] JAR 名称过滤(%s): %v", filterConfig.JarMatchMode, filterConfig.JarIncludes)
 	}
-	color.Green("[CONFIG] 嵌套JAR策略: %s (max-depth=%d)", filterConfig.NestedJarStrategy, filterConfig.MaxJarDepth)
-	if filterConfig.CopyResources {
+	if textMode {
+		color.Green("[CONFIG] 嵌套JAR策略: %s (max-depth=%d)", filterConfig.NestedJarStrategy, filterConfig.MaxJarDepth)
+	}
+	if textMode && filterConfig.CopyResources {
 		color.Green("[CONFIG] 复制配置文件: 已启用")
 	}
-	if filterConfig.CopyLibJars {
+	if textMode && filterConfig.CopyLibJars {
 		color.Green("[CONFIG] 复制依赖 JAR: 已启用")
 	}
-	if filterConfig.GenerateIDEA {
+	if textMode && filterConfig.GenerateIDEA {
 		color.Green("[CONFIG] 生成 IDEA 项目: 已启用")
 	}
 
 	// 初始化CFR管理器
-	color.Cyan("[INIT] 初始化反编译器...")
+	if textMode {
+		color.Cyan("[INIT] 初始化反编译器...")
+	}
 	initStart := time.Now()
 	cfrManager, err := cfr.NewManager()
 	if err != nil {
@@ -99,6 +109,7 @@ func Run(ctx context.Context, inputPath, outputDir string, workers int, filterCo
 
 	// 创建报告
 	rpt := report.New(inputPath, srcDir)
+	rpt.Quiet = !textMode
 	rpt.AddStageDuration("init", time.Since(initStart).Seconds())
 
 	// 根据文件类型选择处理器
@@ -107,30 +118,45 @@ func Run(ctx context.Context, inputPath, outputDir string, workers int, filterCo
 	if info.IsDir() {
 		// 目录处理
 		proc = processor.NewDirectoryProcessor(cfrManager, workers, filterConfig)
-		color.Cyan("[DETECT] 检测到目录,使用目录处理器")
+		logEvent(filterConfig.LogFormat, "info", "processor_selected", map[string]any{"type": "directory"})
+		if textMode {
+			color.Cyan("[DETECT] 检测到目录,使用目录处理器")
+		}
 	} else {
 		// 文件处理
 		ext := strings.ToLower(filepath.Ext(inputPath))
 		switch ext {
 		case ".jar":
 			proc = processor.NewJarProcessor(cfrManager, workers, filterConfig)
-			color.Cyan("[DETECT] 检测到JAR文件,使用JAR处理器")
+			logEvent(filterConfig.LogFormat, "info", "processor_selected", map[string]any{"type": "jar"})
+			if textMode {
+				color.Cyan("[DETECT] 检测到JAR文件,使用JAR处理器")
+			}
 		case ".war":
 			proc = processor.NewWarProcessor(cfrManager, workers, filterConfig)
-			color.Cyan("[DETECT] 检测到WAR文件,使用WAR处理器")
+			logEvent(filterConfig.LogFormat, "info", "processor_selected", map[string]any{"type": "war"})
+			if textMode {
+				color.Cyan("[DETECT] 检测到WAR文件,使用WAR处理器")
+			}
 		case ".class":
-			proc = processor.NewClassProcessor(cfrManager)
-			color.Cyan("[DETECT] 检测到CLASS文件,使用CLASS处理器")
+			proc = processor.NewClassProcessor(cfrManager, textMode)
+			logEvent(filterConfig.LogFormat, "info", "processor_selected", map[string]any{"type": "class"})
+			if textMode {
+				color.Cyan("[DETECT] 检测到CLASS文件,使用CLASS处理器")
+			}
 			rpt.SetTotalExpectedFiles(1)
 		default:
 			return fmt.Errorf("不支持的文件类型: %s", ext)
 		}
 	}
 
-	color.Cyan("============================================\n")
+	if textMode {
+		color.Cyan("============================================\n")
+	}
 
 	// 执行处理
 	processStart := time.Now()
+	logEvent(filterConfig.LogFormat, "info", "process_started", map[string]any{"input": inputPath})
 	if err := proc.Process(ctx, inputPath, srcDir, rpt); err != nil {
 		if err == context.Canceled || err == context.DeadlineExceeded {
 			color.Yellow("\n[CANCEL] 任务已中断: %v", err)
@@ -157,21 +183,37 @@ func Run(ctx context.Context, inputPath, outputDir string, workers int, filterCo
 		return err
 	}
 	rpt.AddStageDuration("process", time.Since(processStart).Seconds())
+	logEvent(filterConfig.LogFormat, "info", "process_completed", map[string]any{
+		"duration_seconds": time.Since(processStart).Seconds(),
+	})
 
 	// Unicode 后处理：将 \uXXXX 转换为实际的中文字符
-	color.Cyan("\n[PROCESS] 处理 Unicode 转义序列...")
-	unicodeStart := time.Now()
-	processed, modified, err := processor.ProcessDirectoryUnicode(srcDir)
-	if err != nil {
-		color.Yellow("[WARN] Unicode 后处理警告: %v", err)
-	} else if modified > 0 {
-		color.Green("[OK] Unicode 后处理完成: 处理 %d 文件, 修复 %d 文件", processed, modified)
+	if filterConfig.UnicodePostprocess {
+		if textMode {
+			color.Cyan("\n[PROCESS] 处理 Unicode 转义序列...")
+		}
+		unicodeStart := time.Now()
+		processed, modified, err := processor.ProcessDirectoryUnicode(srcDir)
+		if err != nil {
+			if textMode {
+				color.Yellow("[WARN] Unicode 后处理警告: %v", err)
+			}
+		} else if modified > 0 && textMode {
+			color.Green("[OK] Unicode 后处理完成: 处理 %d 文件, 修复 %d 文件", processed, modified)
+		}
+		rpt.AddStageDuration("unicode_postprocess", time.Since(unicodeStart).Seconds())
+		logEvent(filterConfig.LogFormat, "info", "unicode_postprocess_completed", map[string]any{
+			"processed_files": processed,
+			"modified_files":  modified,
+			"duration_seconds": time.Since(unicodeStart).Seconds(),
+		})
 	}
-	rpt.AddStageDuration("unicode_postprocess", time.Since(unicodeStart).Seconds())
 
 	// 生成 IDEA 项目配置
 	if filterConfig.GenerateIDEA {
-		color.Cyan("\n[PROCESS] 生成 IDEA 项目配置...")
+		if textMode {
+			color.Cyan("\n[PROCESS] 生成 IDEA 项目配置...")
+		}
 		ideaStart := time.Now()
 		projectName := filepath.Base(outputDir)
 		if projectName == "." || projectName == "" {
@@ -186,9 +228,13 @@ func Run(ctx context.Context, inputPath, outputDir string, workers int, filterCo
 		}
 
 		if err := processor.GenerateIDEAProject(projectConfig); err != nil {
-			color.Yellow("[WARN] 生成 IDEA 项目配置失败: %v", err)
+			if textMode {
+				color.Yellow("[WARN] 生成 IDEA 项目配置失败: %v", err)
+			}
 		} else {
-			color.Green("[OK] IDEA 项目配置已生成，可直接用 IDEA 打开: %s", outputDir)
+			if textMode {
+				color.Green("[OK] IDEA 项目配置已生成，可直接用 IDEA 打开: %s", outputDir)
+			}
 		}
 		rpt.AddStageDuration("idea_project", time.Since(ideaStart).Seconds())
 	}

@@ -224,11 +224,22 @@ emorad.exe path\to\your.jar
 
 **解决方法**:
 ```cmd
-# 手动下载CFR并放置到:
+# 方案1: 手动下载并放置到默认路径
+# Windows:
 # C:\Users\你的用户名\.emorad\cfr\cfr-0.152.jar
+# Linux:
+# ~/.emorad/cfr/cfr-0.152.jar
 
-# 或安装系统CFR(如果有brew for Windows)
-brew install cfr-decompiler
+# 方案2: 指定本地CFR JAR路径（推荐内网）
+set EMORAD_CFR_JAR_PATH=C:\tools\cfr\cfr-0.152.jar
+set EMORAD_SKIP_CFR_DOWNLOAD=1
+
+# Linux:
+# export EMORAD_CFR_JAR_PATH=/opt/tools/cfr/cfr-0.152.jar
+# export EMORAD_SKIP_CFR_DOWNLOAD=1
+
+# 方案3: 配置内网镜像下载地址
+set EMORAD_CFR_DOWNLOAD_URL=https://your-mirror.example.com/cfr-0.152.jar
 ```
 
 ### 4. 权限问题

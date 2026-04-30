@@ -436,11 +436,21 @@ java -version
 ### CFR下载失败
 
 ```bash
-# 手动下载CFR并放置到:
-# ~/.emorad/cfr/cfr-0.152.jar
+# 方案1: 手动下载并放置到默认路径
+# Linux/macOS: ~/.emorad/cfr/cfr-0.152.jar
+# Windows: C:\Users\<用户名>\.emorad\cfr\cfr-0.152.jar
 
-# 或安装系统CFR
-brew install cfr-decompiler  # macOS
+# 方案2: 指定本地CFR JAR路径（推荐内网）
+# Linux/macOS:
+export EMORAD_CFR_JAR_PATH=/opt/tools/cfr/cfr-0.152.jar
+export EMORAD_SKIP_CFR_DOWNLOAD=1
+
+# Windows (cmd):
+set EMORAD_CFR_JAR_PATH=C:\tools\cfr\cfr-0.152.jar
+set EMORAD_SKIP_CFR_DOWNLOAD=1
+
+# 方案3: 使用内网镜像地址下载
+export EMORAD_CFR_DOWNLOAD_URL=https://your-mirror.example.com/cfr-0.152.jar
 ```
 
 ### 权限问题 (Linux/macOS)

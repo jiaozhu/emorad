@@ -21,6 +21,13 @@ const (
 	Version     = "0.152"
 )
 
+const (
+	envCFRJarPath     = "EMORAD_CFR_JAR_PATH"
+	envCFRDir         = "EMORAD_CFR_DIR"
+	envCFRDownloadURL = "EMORAD_CFR_DOWNLOAD_URL"
+	envSkipDownload   = "EMORAD_SKIP_CFR_DOWNLOAD"
+)
+
 // Manager 管理CFR反编译器
 type Manager struct {
 	cfrPath  string // CFR JAR文件路径或命令路径
@@ -63,15 +70,79 @@ func NewManager() (*Manager, error) {
 	return manager, nil
 }
 
-// ensureCFRJar 确保CFR JAR文件存在,如果不存在则下载
-func (m *Manager) ensureCFRJar() (string, error) {
-	// 确定CFR存储目录
+func getDefaultCFRDir() (string, error) {
+	if custom := strings.TrimSpace(os.Getenv(envCFRDir)); custom != "" {
+		return custom, nil
+	}
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("无法获取用户主目录: %v", err)
 	}
+	return filepath.Join(homeDir, ".emorad", "cfr"), nil
+}
 
-	cfrDir := filepath.Join(homeDir, ".emorad", "cfr")
+func getDefaultCFRJarPath() (string, error) {
+	cfrDir, err := getDefaultCFRDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(cfrDir, fmt.Sprintf("cfr-%s.jar", Version)), nil
+}
+
+func getDownloadURL() string {
+	if custom := strings.TrimSpace(os.Getenv(envCFRDownloadURL)); custom != "" {
+		return custom
+	}
+	return DownloadURL
+}
+
+func shouldSkipDownload() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv(envSkipDownload)))
+	return v == "1" || v == "true" || v == "yes"
+}
+
+func manualInstallHint(targetPath string) string {
+	base := []string{
+		"可选方案:",
+		fmt.Sprintf("1) 手动下载 cfr-%s.jar 并放到: %s", Version, targetPath),
+		fmt.Sprintf("2) 设置环境变量 %s 指向本地 cfr jar", envCFRJarPath),
+		fmt.Sprintf("3) 设置环境变量 %s 指定缓存目录", envCFRDir),
+		fmt.Sprintf("4) 设置环境变量 %s 使用内网镜像地址", envCFRDownloadURL),
+	}
+	if runtime.GOOS == "windows" {
+		base = append(base,
+			"",
+			"Windows 示例:",
+			fmt.Sprintf("  set %s=C:\\tools\\cfr\\cfr-%s.jar", envCFRJarPath, Version),
+			fmt.Sprintf("  set %s=1", envSkipDownload),
+		)
+	} else {
+		base = append(base,
+			"",
+			"Linux 示例:",
+			fmt.Sprintf("  export %s=/opt/tools/cfr/cfr-%s.jar", envCFRJarPath, Version),
+			fmt.Sprintf("  export %s=1", envSkipDownload),
+		)
+	}
+	return strings.Join(base, "\n")
+}
+
+// ensureCFRJar 确保CFR JAR文件存在,如果不存在则下载
+func (m *Manager) ensureCFRJar() (string, error) {
+	// 1) 显式路径优先
+	if customPath := strings.TrimSpace(os.Getenv(envCFRJarPath)); customPath != "" {
+		if _, err := os.Stat(customPath); err == nil {
+			color.Green("✓ 使用环境变量指定的 CFR JAR: %s", customPath)
+			return customPath, nil
+		}
+		return "", fmt.Errorf("环境变量 %s 指定的文件不存在: %s", envCFRJarPath, customPath)
+	}
+
+	// 2) 默认缓存路径
+	cfrDir, err := getDefaultCFRDir()
+	if err != nil {
+		return "", err
+	}
 	if err := os.MkdirAll(cfrDir, 0755); err != nil {
 		return "", fmt.Errorf("创建CFR目录失败: %v", err)
 	}
@@ -83,10 +154,14 @@ func (m *Manager) ensureCFRJar() (string, error) {
 		return cfrJarPath, nil
 	}
 
+	if shouldSkipDownload() {
+		return "", fmt.Errorf("未找到本地 CFR JAR，且已禁用自动下载 (%s=1)\n%s", envSkipDownload, manualInstallHint(cfrJarPath))
+	}
+
 	// 下载CFR JAR
 	color.Cyan("正在下载CFR反编译器 v%s...", Version)
 	if err := m.downloadCFR(cfrJarPath); err != nil {
-		return "", err
+		return "", fmt.Errorf("%v\n%s", err, manualInstallHint(cfrJarPath))
 	}
 
 	color.Green("✓ CFR下载完成")
@@ -98,14 +173,15 @@ func (m *Manager) downloadCFR(destPath string) error {
 	client := &http.Client{
 		Timeout: 60 * time.Second,
 	}
-	resp, err := client.Get(DownloadURL)
+	downloadURL := getDownloadURL()
+	resp, err := client.Get(downloadURL)
 	if err != nil {
-		return fmt.Errorf("下载CFR失败: %v", err)
+		return fmt.Errorf("下载CFR失败 (url=%s): %v", downloadURL, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("下载CFR失败,状态码: %d", resp.StatusCode)
+		return fmt.Errorf("下载CFR失败 (url=%s), 状态码: %d", downloadURL, resp.StatusCode)
 	}
 
 	out, err := os.Create(destPath)
